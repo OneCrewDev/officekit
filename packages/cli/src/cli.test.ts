@@ -745,6 +745,61 @@ describe("officekit CLI scaffold", () => {
     expect(sheetXml).toContain('r="D2"><v>42</v>');
   });
 
+  test("imports quoted formulas that contain delimiter commas", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-import-formula-quoted-"));
+    const filePath = path.join(dir, "formula-quoted.xlsx");
+    const csvPath = path.join(dir, "formula-quoted.csv");
+    await writeFile(csvPath, 'Label,Formula\nTotal,"=SUM(1,2)"\n');
+    await runCli(["create", filePath]);
+
+    await runCli([
+      "import",
+      filePath,
+      "/Sheet1",
+      csvPath,
+      "--format",
+      "csv",
+      "--header",
+      "--start-cell",
+      "A1",
+    ]);
+
+    const formulaCell = await runCli(["get", filePath, "/Sheet1/B2", "--json"]);
+    const sheetXml = readStoredZip(await readFile(filePath)).get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(formulaCell.stdout).toContain('"formula": "SUM(1,2)"');
+    expect(sheetXml).toContain('<f>SUM(1,2)</f>');
+  });
+
+  test("imports multiline quoted cells without losing neighboring columns", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-import-multiline-"));
+    const filePath = path.join(dir, "multiline.xlsx");
+    const csvPath = path.join(dir, "multiline.csv");
+    await writeFile(csvPath, 'Name,Notes,Score\nAlpha,"Line 1\nLine 2",42\nBeta,"Single line",43\n');
+    await runCli(["create", filePath]);
+
+    await runCli([
+      "import",
+      filePath,
+      "/Sheet1",
+      csvPath,
+      "--format",
+      "csv",
+      "--header",
+      "--start-cell",
+      "A1",
+    ]);
+
+    const noteCell = await runCli(["get", filePath, "/Sheet1/B2", "--json"]);
+    const scoreCell = await runCli(["get", filePath, "/Sheet1/C3", "--json"]);
+    const sheetXml = readStoredZip(await readFile(filePath)).get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(noteCell.stdout).toContain('Line 1\\nLine 2');
+    expect(scoreCell.stdout).toContain('"value": "43"');
+    expect(sheetXml).toContain('r="B2"');
+    expect(sheetXml).toContain('r="C3"');
+  });
+
   test("round-trips an imported workbook without dropping header affordances or inferred cell semantics", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-import-roundtrip-"));
     const filePath = path.join(dir, "roundtrip.xlsx");
