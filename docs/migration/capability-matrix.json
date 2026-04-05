@@ -1,0 +1,317 @@
+[
+  {
+    "family": "CLI shell",
+    "capability": "create blank .docx/.xlsx/.pptx",
+    "sourceEvidence": "CommandBuilder.Import.cs#create + README quick start",
+    "targetPackage": "packages/cli + format packages",
+    "verification": "integration + smoke",
+    "status": "inventory",
+    "notes": "Type may be inferred from extension or overridden."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "open/close resident mode",
+    "sourceEvidence": "CommandBuilder.cs + README resident mode section",
+    "targetPackage": "packages/cli + packages/core",
+    "verification": "integration + e2e",
+    "status": "inventory",
+    "notes": "Resident mode is a top-level workflow for low-latency repeated operations."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "get/query structured inspection",
+    "sourceEvidence": "CommandBuilder.GetQuery.cs + README command reference",
+    "targetPackage": "packages/cli + packages/core",
+    "verification": "unit + differential parity",
+    "status": "inventory",
+    "notes": "JSON and text outputs both matter."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "set/add/remove/move/swap mutations",
+    "sourceEvidence": "CommandBuilder.Add.cs + CommandBuilder.Set.cs + README patterns",
+    "targetPackage": "packages/cli + format packages",
+    "verification": "integration + differential parity",
+    "status": "inventory",
+    "notes": "Covers copy-from, insert positions, and property setters."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "batch multi-command execution",
+    "sourceEvidence": "CommandBuilder.Batch.cs + README resident/batch section",
+    "targetPackage": "packages/cli + packages/core",
+    "verification": "integration + e2e",
+    "status": "inventory",
+    "notes": "stdin/input file/inline JSON modes required."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "raw/raw-set/add-part fallback",
+    "sourceEvidence": "CommandBuilder.Raw.cs + README three-layer architecture",
+    "targetPackage": "packages/cli + packages/core",
+    "verification": "integration + differential parity",
+    "status": "inventory",
+    "notes": "Long-tail parity escape hatch."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "validate/check quality scans",
+    "sourceEvidence": "CommandBuilder.Check.cs + README command reference",
+    "targetPackage": "packages/cli + packages/core",
+    "verification": "integration + snapshot",
+    "status": "inventory",
+    "notes": "Schema validation and higher-level issue reporting are distinct."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "view modes: text/annotated/outline/stats/issues/html/svg/forms",
+    "sourceEvidence": "CommandBuilder.View.cs + README live preview section",
+    "targetPackage": "packages/preview + packages/cli",
+    "verification": "integration + rendered snapshots",
+    "status": "inventory",
+    "notes": "Preview family is developer-facing, not optional polish."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "watch/unwatch live preview server",
+    "sourceEvidence": "CommandBuilder.Watch.cs + README developer preview quick start",
+    "targetPackage": "packages/preview + packages/cli",
+    "verification": "manual browser smoke + integration",
+    "status": "inventory",
+    "notes": "Auto-refresh semantics need fixture-backed coverage."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "import CSV/TSV into Excel sheets",
+    "sourceEvidence": "CommandBuilder.Import.cs + README common patterns",
+    "targetPackage": "packages/excel + packages/cli",
+    "verification": "integration",
+    "status": "inventory",
+    "notes": "Supports file or stdin sources, header and start-cell options."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "template merge for docx/xlsx/pptx",
+    "sourceEvidence": "CommandBuilder.Import.cs#merge + Core/TemplateMerger.cs + README workflow examples",
+    "targetPackage": "packages/core + format packages",
+    "verification": "integration + fixture-backed parity",
+    "status": "inventory",
+    "notes": "Includes unresolved placeholder reporting."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "help / format-prefixed deep help",
+    "sourceEvidence": "HelpCommands.cs + README built-in help section",
+    "targetPackage": "packages/docs + packages/cli",
+    "verification": "snapshot + docs acceptance",
+    "status": "inventory",
+    "notes": "Command compatibility can change, but deep discoverability must remain."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "install/skills/config/update",
+    "sourceEvidence": "Program.cs + Installer.cs + SkillInstaller.cs + UpdateChecker.cs + README installation/update sections",
+    "targetPackage": "packages/install + packages/skills + packages/core",
+    "verification": "integration + docs acceptance",
+    "status": "inventory",
+    "notes": "Officekit naming and lineage wording required."
+  },
+  {
+    "family": "CLI shell",
+    "capability": "MCP server/install",
+    "sourceEvidence": "Program.cs mcp branch + README AI integration section",
+    "targetPackage": "excluded",
+    "verification": "n/a",
+    "status": "excluded",
+    "notes": "Explicitly out of scope for officekit v1."
+  },
+  {
+    "family": "Shared core",
+    "capability": "selector/path alias grammar",
+    "sourceEvidence": "Core/PathAliases.cs + Core/AttributeFilter.cs + Core/GenericXmlQuery.cs",
+    "targetPackage": "packages/core",
+    "verification": "unit + differential parity",
+    "status": "inventory",
+    "notes": "Phase-gate semantic surface."
+  },
+  {
+    "family": "Shared core",
+    "capability": "units/colors/EMU/theme parsing",
+    "sourceEvidence": "Core/Units.cs + Core/EmuConverter.cs + Core/ColorMath.cs + Core/ParseHelpers.cs + Core/ThemeColorResolver.cs",
+    "targetPackage": "packages/core",
+    "verification": "unit",
+    "status": "inventory",
+    "notes": "Cross-format numeric and color behavior."
+  },
+  {
+    "family": "Shared core",
+    "capability": "JSON/text output envelopes",
+    "sourceEvidence": "Core/OutputFormatter.cs + CommandBuilder.cs",
+    "targetPackage": "packages/core",
+    "verification": "snapshot + unit",
+    "status": "inventory",
+    "notes": "AI-facing result shape must be stable."
+  },
+  {
+    "family": "Shared core",
+    "capability": "resident IPC and batch request schemas",
+    "sourceEvidence": "Core/ResidentClient.cs + Core/ResidentServer.cs + Core/BatchTypes.cs",
+    "targetPackage": "packages/core",
+    "verification": "integration + e2e",
+    "status": "inventory",
+    "notes": "Needed for low-latency loops and atomic updates."
+  },
+  {
+    "family": "Shared core",
+    "capability": "raw XML helper / metadata / theme helpers",
+    "sourceEvidence": "Core/RawXmlHelper.cs + Core/ExtendedPropertiesHandler.cs + Core/ThemeHandler.cs",
+    "targetPackage": "packages/core + format packages",
+    "verification": "integration",
+    "status": "inventory",
+    "notes": "Backs long-tail escape hatch plus document/theme metadata."
+  },
+  {
+    "family": "Word",
+    "capability": "paragraphs, runs, tables, styles",
+    "sourceEvidence": "README key features Word list + Handlers/WordHandler.cs",
+    "targetPackage": "packages/word",
+    "verification": "format integration + differential parity",
+    "status": "inventory",
+    "notes": "Core document editing path."
+  },
+  {
+    "family": "Word",
+    "capability": "headers/footers, images, equations, hyperlinks",
+    "sourceEvidence": "README key features Word list + WordHandler raw layer",
+    "targetPackage": "packages/word",
+    "verification": "format integration + fixture-backed parity",
+    "status": "inventory",
+    "notes": "Long-tail but promised in source docs."
+  },
+  {
+    "family": "Word",
+    "capability": "comments, footnotes, bookmarks, TOC, sections",
+    "sourceEvidence": "README key features Word list",
+    "targetPackage": "packages/word",
+    "verification": "format integration",
+    "status": "inventory",
+    "notes": "Needs explicit status tracking even before implementation."
+  },
+  {
+    "family": "Word",
+    "capability": "watermarks, form fields, content controls, document properties",
+    "sourceEvidence": "README key features Word list + Core/ExtendedPropertiesHandler.cs",
+    "targetPackage": "packages/word + packages/core",
+    "verification": "format integration",
+    "status": "inventory",
+    "notes": "Properties cross-cut with shared metadata helper."
+  },
+  {
+    "family": "Excel",
+    "capability": "workbook/sheet/cell/range operations",
+    "sourceEvidence": "README key features Excel list + Handlers/ExcelHandler.cs",
+    "targetPackage": "packages/excel",
+    "verification": "format integration + differential parity",
+    "status": "inventory",
+    "notes": "Includes $Sheet:A1 addressing."
+  },
+  {
+    "family": "Excel",
+    "capability": "formulas and evaluator",
+    "sourceEvidence": "README key features Excel list + Core/FormulaEvaluator*.cs",
+    "targetPackage": "packages/excel",
+    "verification": "unit + integration",
+    "status": "inventory",
+    "notes": "150+ built-in function claim requires evidence-backed migration."
+  },
+  {
+    "family": "Excel",
+    "capability": "styles, conditional formatting, data validation, autofilter",
+    "sourceEvidence": "README key features Excel list + Core/ExcelStyleManager.cs",
+    "targetPackage": "packages/excel",
+    "verification": "format integration",
+    "status": "inventory",
+    "notes": "Style semantics are a major parity risk."
+  },
+  {
+    "family": "Excel",
+    "capability": "charts and SVG/preview rendering",
+    "sourceEvidence": "README key features Excel list + Core/Chart*.cs",
+    "targetPackage": "packages/excel + packages/preview",
+    "verification": "format integration + rendered snapshots",
+    "status": "inventory",
+    "notes": "Shared chart helper cluster also supports PPT/Word embeddings."
+  },
+  {
+    "family": "Excel",
+    "capability": "pivot tables, named ranges, sparklines, comments, shapes",
+    "sourceEvidence": "README key features Excel list + Core/PivotTableHelper.cs",
+    "targetPackage": "packages/excel",
+    "verification": "format integration + differential parity",
+    "status": "inventory",
+    "notes": "Long-tail parity families called out explicitly in PRD/test spec."
+  },
+  {
+    "family": "PowerPoint",
+    "capability": "slides, shapes, tables, images",
+    "sourceEvidence": "README key features PowerPoint list + Handlers/PowerPointHandler.cs",
+    "targetPackage": "packages/ppt",
+    "verification": "format integration + differential parity",
+    "status": "inventory",
+    "notes": "Baseline presentation editing path."
+  },
+  {
+    "family": "PowerPoint",
+    "capability": "charts, themes, placeholders, notes, groups, connectors",
+    "sourceEvidence": "README key features PowerPoint list + Core/Chart*.cs + PowerPointHandler.cs",
+    "targetPackage": "packages/ppt",
+    "verification": "format integration + preview snapshots",
+    "status": "inventory",
+    "notes": "Connector/group/media handling is preview-sensitive."
+  },
+  {
+    "family": "PowerPoint",
+    "capability": "animations, morph transitions, slide zoom, 3D models",
+    "sourceEvidence": "README key features PowerPoint list + examples/ppt/*",
+    "targetPackage": "packages/ppt",
+    "verification": "fixture-backed parity + manual inspection",
+    "status": "inventory",
+    "notes": "Examples provide real fixtures for these long-tail promises."
+  },
+  {
+    "family": "PowerPoint",
+    "capability": "video/audio/media embedding",
+    "sourceEvidence": "README key features PowerPoint list + PowerPointHandler.cs media cleanup paths",
+    "targetPackage": "packages/ppt",
+    "verification": "format integration",
+    "status": "inventory",
+    "notes": "Media relationship handling needs dedicated fixtures."
+  },
+  {
+    "family": "Preview/docs",
+    "capability": "developer quick-start live preview workflow",
+    "sourceEvidence": "README developer 30-second flow + build workflow smoke test",
+    "targetPackage": "packages/preview + README",
+    "verification": "manual browser smoke + docs acceptance",
+    "status": "inventory",
+    "notes": "Must work with officekit branding and lineage statement."
+  },
+  {
+    "family": "Skills/install",
+    "capability": "agent skill discovery and installation",
+    "sourceEvidence": "SKILL.md + Program.cs skills branch + Installer.cs",
+    "targetPackage": "packages/skills + packages/install",
+    "verification": "integration + docs acceptance",
+    "status": "inventory",
+    "notes": "OfficeCLI auto-installs across agent tools; officekit needs equivalent story."
+  },
+  {
+    "family": "Docs/examples",
+    "capability": "README quick starts and end-to-end examples",
+    "sourceEvidence": "README.md + examples/**/* + build workflow smoke section",
+    "targetPackage": "packages/docs + fixtures/officecli-source",
+    "verification": "docs acceptance + fixture manifest",
+    "status": "inventory",
+    "notes": "Lane 1 harvests these as migration fixtures."
+  }
+]

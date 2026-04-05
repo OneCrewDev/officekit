@@ -1,0 +1,440 @@
+{
+  "generatedAt": "2026-04-05T03:23:50.681Z",
+  "sourceRoot": "../OfficeCLI",
+  "smokeCommands": [
+    "create test_smoke.docx",
+    "add test_smoke.docx /body --type paragraph --prop text=\"Hello from CI\"",
+    "get test_smoke.docx /body/p[1]"
+  ],
+  "included": [
+    {
+      "path": ".github/workflows/build.yml",
+      "kind": "ci-workflow",
+      "rationale": "Release packaging matrix plus smoke-test flow",
+      "bytes": 4089,
+      "sha256": "933e40afac3df127be3695e203ea42c52c36b9ab7bada0fe2737e08128f3cbc7"
+    },
+    {
+      "path": "examples/Alien_Guide.pptx",
+      "kind": "example-fixture",
+      "rationale": "Small binary sample document from OfficeCLI examples",
+      "bytes": 14813,
+      "sha256": "17d96418d3086e11407e46e9cdb41bcbafc215de9511fb7ab11436461f3e2c44"
+    },
+    {
+      "path": "examples/budget_review_v2.pptx",
+      "kind": "example-fixture",
+      "rationale": "Small binary sample document from OfficeCLI examples",
+      "bytes": 24536,
+      "sha256": "7e53078d284595be7ae1e3aaf746c2d7c38a031023e632fe33b5ab67ac8240ca"
+    },
+    {
+      "path": "examples/Cat-Secret-Life.pptx",
+      "kind": "example-fixture",
+      "rationale": "Small binary sample document from OfficeCLI examples",
+      "bytes": 24321,
+      "sha256": "eec1d077cf9761315fe878a6d786b765f2b84ce73a6df2b693c0227bd213fb06"
+    },
+    {
+      "path": "examples/excel/gen-beautiful-charts.sh",
+      "kind": "example-fixture",
+      "rationale": "Excel parity example or generator script",
+      "bytes": 47846,
+      "sha256": "c7f8679b15902b2aaf085d975733465e0b6a210390c836ecf30b789d5d9fe2fb"
+    },
+    {
+      "path": "examples/excel/gen-charts-demo.sh",
+      "kind": "example-fixture",
+      "rationale": "Excel parity example or generator script",
+      "bytes": 25042,
+      "sha256": "b9e24cfa264e12adcaeb3a4c2d78806d7ae0f8ee7115fce5573caedd7fee8757"
+    },
+    {
+      "path": "examples/excel/README.md",
+      "kind": "example-fixture",
+      "rationale": "Excel parity example or generator script",
+      "bytes": 4468,
+      "sha256": "4518a6ef9a3ad4a12a0091df076b61f7d53b9e5cd13def02bff0f1670af46975"
+    },
+    {
+      "path": "examples/ppt/gen-3d-sun-pptx.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 9702,
+      "sha256": "820383e2dca22868aa23b7eefadd48733c65d5ba330c0abc869013a4fcc19856"
+    },
+    {
+      "path": "examples/ppt/gen-animations-pptx.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 13245,
+      "sha256": "e315bf53f4aaf1e4d8dd8cb41f90de4b24e183fb7dad7c7d81f06869d59c55b2"
+    },
+    {
+      "path": "examples/ppt/gen-beautiful-pptx.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 31161,
+      "sha256": "bca207aa495c851ba632b0906c8704e4c9f5eaa02b92fac862d4a6265a27be6f"
+    },
+    {
+      "path": "examples/ppt/gen-video-pptx.py",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 6135,
+      "sha256": "cf1b2fcd450958342777b5f051a4b7dd300f73e726b275de69c818efc7a4c18d"
+    },
+    {
+      "path": "examples/ppt/README.md",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 9698,
+      "sha256": "df9f60c5b15d0ffaece46a16efec508ea972b0fa5dce772a525c19e66085b2c6"
+    },
+    {
+      "path": "examples/ppt/templates/README.md",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 4490,
+      "sha256": "fb39144dd47bffed76a13b8bff0478e7db080d95dcabd8e7ba70b8459f709ae4"
+    },
+    {
+      "path": "examples/ppt/templates/styles/brand--aura-coffee-dark/AURA_COFFEE.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 19003,
+      "sha256": "2f5f29658033a49e7b80edde33a1c548bb5b2ae03169c018dff7849411b92917"
+    },
+    {
+      "path": "examples/ppt/templates/styles/brand--aura-coffee-dark/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 8408,
+      "sha256": "80cd4a32ab8276ae9211b5931ac2bcde8babc24415f03e5adcf51b2402f2ed84"
+    },
+    {
+      "path": "examples/ppt/templates/styles/brand--aura-coffee/aura_coffee.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 19647,
+      "sha256": "972c62e96837646497eff0b8f61e321bf91cdadf3520716972d7def6005c31d5"
+    },
+    {
+      "path": "examples/ppt/templates/styles/brand--aura-coffee/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 14166,
+      "sha256": "a647e30069fd188c6625f34e75663a08f1742544d9a6a33f2a7aa6bcb2044640"
+    },
+    {
+      "path": "examples/ppt/templates/styles/future--2050-vision/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 14959,
+      "sha256": "04e0b5ff8eaf95d0686a58c03cfb49a3e55e1f51e17f4b198528cf69ac798926"
+    },
+    {
+      "path": "examples/ppt/templates/styles/future--2050-vision/未来已来_2050.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 21195,
+      "sha256": "9c9952d14604338d632ceeca1930ee340075aefc5d69258ba4715a7a66209fcd"
+    },
+    {
+      "path": "examples/ppt/templates/styles/lifestyle--cat-philosophy/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 12403,
+      "sha256": "0aabee452482816cd5931b3b5843ee01a8ac281a7b9aa6f79ed242b0548f7148"
+    },
+    {
+      "path": "examples/ppt/templates/styles/lifestyle--cat-philosophy/cat_philosophy.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 19552,
+      "sha256": "3d6f2f56dd42da31ec660568988f51cd4967a446c05a35a77a0f244ff04e06f3"
+    },
+    {
+      "path": "examples/ppt/templates/styles/lifestyle--cat-secret-life/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 17527,
+      "sha256": "f4f8bae212ce319d1f3647dbcaa17cb8ea55188e545c8ba2cb6bb7f3cf28d2c0"
+    },
+    {
+      "path": "examples/ppt/templates/styles/lifestyle--cat-secret-life/Cat-Secret-Life.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 24321,
+      "sha256": "eec1d077cf9761315fe878a6d786b765f2b84ce73a6df2b693c0227bd213fb06"
+    },
+    {
+      "path": "examples/ppt/templates/styles/lifestyle--feline-report/build_ppt.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 4226,
+      "sha256": "92f0a9bc4be857e818521b8c0203c2dc541d9a4e6daee357da41e756e793bf17"
+    },
+    {
+      "path": "examples/ppt/templates/styles/lifestyle--feline-report/Feline_Report.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 11878,
+      "sha256": "9149b4e95d7e5e7672aa494291b8b114407a23735820cc12b060b82e4aadff3e"
+    },
+    {
+      "path": "examples/ppt/templates/styles/product--aionui-promo/AionUI-推广.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 19289,
+      "sha256": "c6be5f1167ff4970555e9812e9a2fc6311ca80b839f20acbd1c4b4cc91dfe160"
+    },
+    {
+      "path": "examples/ppt/templates/styles/product--aionui-promo/outline.md",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 1265,
+      "sha256": "d78a4f0eedb29a3a2b862e8e4bc24767637af381ce74ff901b6c06fdd3b57bab"
+    },
+    {
+      "path": "examples/ppt/templates/styles/product--geminicli-timetravel/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 15161,
+      "sha256": "d7bc8b616d104b5fc425d9cfe3b8686e13d00f6f9a172bd333d9fb488f3afc55"
+    },
+    {
+      "path": "examples/ppt/templates/styles/product--geminicli-timetravel/GeminiCLI-TimeTravel.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 22005,
+      "sha256": "2f1e3326ebab8078eadde93263640450c40b2dc6590d9eb33097a5301327fe19"
+    },
+    {
+      "path": "examples/ppt/templates/styles/productivity--attention-budget/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 33554,
+      "sha256": "21741a30ce7ed91847207e295ab9ebf9ec70461cfb26cd1f54fdcb7694fa144b"
+    },
+    {
+      "path": "examples/ppt/templates/styles/productivity--attention-budget/注意力预算-把手机时间变成创造时间.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 36292,
+      "sha256": "3d375678ef567f55823b5adad45ecbb128c1bfd675e682474a577883d2d754d5"
+    },
+    {
+      "path": "examples/ppt/templates/styles/science--alien-guide/Alien_Guide.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 14813,
+      "sha256": "17d96418d3086e11407e46e9cdb41bcbafc215de9511fb7ab11436461f3e2c44"
+    },
+    {
+      "path": "examples/ppt/templates/styles/science--alien-guide/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 8875,
+      "sha256": "ec26a28ba95736a6f8c29aa4e029a6b3b2ed3f5902e512a87b25d4194f4a296d"
+    },
+    {
+      "path": "examples/ppt/templates/styles/science--mars-settlement/build.json",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 16716,
+      "sha256": "27e06bed4ac9f0a8002b580304258d9f421f1ebcd10f4d49063296a9bc2c47e8"
+    },
+    {
+      "path": "examples/ppt/templates/styles/science--mars-settlement/Mars-Settlement-Guide.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 18626,
+      "sha256": "1da250e7d3c95a26e27178f0db4a09b3453da8192514788a3fc6a46274b8823c"
+    },
+    {
+      "path": "examples/ppt/templates/styles/science--space-exploration/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 28069,
+      "sha256": "c45cb19629a79a49a997e8bc24f3cab4d4dfcaf308a8b66a6b9f40d6d808efaf"
+    },
+    {
+      "path": "examples/ppt/templates/styles/science--space-exploration/太空探索历程.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 22120,
+      "sha256": "720963f00c2ce7915aad7dbc0be9a9a011ab9100b8f52eeed23f443f7bd085e0"
+    },
+    {
+      "path": "examples/ppt/templates/styles/science--time-travel/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 12473,
+      "sha256": "187567e22c09b2ad924deda8155f1194e69c5aba62f9277b8141d6b5a5c95e52"
+    },
+    {
+      "path": "examples/ppt/templates/styles/science--time-travel/Time_Travel.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 20086,
+      "sha256": "de1ba06ee60aa3de0fdac6f57bfb200c0f87ae9d25828deec8e87447b7332c12"
+    },
+    {
+      "path": "examples/ppt/templates/styles/tech--wildlife-company/build.sh",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 6135,
+      "sha256": "0b97776f4667dedfc5b685b6625c69c041cbc3a879bfb5eb85a4c3b868b19762"
+    },
+    {
+      "path": "examples/ppt/templates/styles/tech--wildlife-company/野生动物科技公司.pptx",
+      "kind": "example-fixture",
+      "rationale": "PowerPoint parity example or generator script",
+      "bytes": 21955,
+      "sha256": "175b0088491afb96a5530b47ef1356f662da8ca50bd99fd5720e10c1b908c684"
+    },
+    {
+      "path": "examples/product_launch_morph.pptx",
+      "kind": "example-fixture",
+      "rationale": "Small binary sample document from OfficeCLI examples",
+      "bytes": 15388,
+      "sha256": "6d947331dc22afdabbadca60d1865ade6e77cd9565d911a8925069d1a159afb6"
+    },
+    {
+      "path": "examples/README.md",
+      "kind": "example-fixture",
+      "rationale": "Top-level example documentation or supporting fixture",
+      "bytes": 8905,
+      "sha256": "e9be2f7b7ac02e3b0e6e6908251c0b8d3e2be6155f9f1f3e8749682dd1457d89"
+    },
+    {
+      "path": "examples/word/gen-complex-tables.sh",
+      "kind": "example-fixture",
+      "rationale": "Word parity example or generator script",
+      "bytes": 28228,
+      "sha256": "f44b681cce56ece624a91ac467c0c10885903cfb86c6187c9aa3cbc64056f0af"
+    },
+    {
+      "path": "examples/word/gen-complex-textbox.sh",
+      "kind": "example-fixture",
+      "rationale": "Word parity example or generator script",
+      "bytes": 36610,
+      "sha256": "0a58c2d6fa5d21c54eddbee0642196a5b10a8619474e570c64441c3d4c1d9846"
+    },
+    {
+      "path": "examples/word/gen-formulas.sh",
+      "kind": "example-fixture",
+      "rationale": "Word parity example or generator script",
+      "bytes": 7853,
+      "sha256": "5f7f9c226ce27572c2fd464f7eba73b8f4eb0277216110aae2b0e8961fd46397"
+    },
+    {
+      "path": "examples/word/README.md",
+      "kind": "example-fixture",
+      "rationale": "Word parity example or generator script",
+      "bytes": 3432,
+      "sha256": "7869195cdc8d9e7565366b7b207195a3535286143ea3cc1e38d4636c355f0538"
+    },
+    {
+      "path": "README.md",
+      "kind": "readme",
+      "rationale": "Top-level capability and workflow promises",
+      "bytes": 28312,
+      "sha256": "71c1309c55f4a5ff3762d5b6bbf70be458b068174bcc1c1a0fdf77da73312f1b"
+    },
+    {
+      "path": "SKILL.md",
+      "kind": "skill",
+      "rationale": "Agent-install surface and usage guidance",
+      "bytes": 17751,
+      "sha256": "5ab22db2750548d751dd8ae02258842d22eea746eb7fb61673cd9b48784d6b01"
+    },
+    {
+      "path": "src/officecli/Resources/preview.css",
+      "kind": "preview-asset",
+      "rationale": "Preview HTML styling fixture",
+      "bytes": 5592,
+      "sha256": "69ae6c1d53b11a41d001159f64e5a53e3754c1efb64a95ecada55d4533f94187"
+    },
+    {
+      "path": "src/officecli/Resources/preview.js",
+      "kind": "preview-asset",
+      "rationale": "Preview auto-refresh/browser behavior fixture",
+      "bytes": 8178,
+      "sha256": "c6785440e82376ed369f7f60744ba4374da813c511b65524ecf502712dcfef51"
+    }
+  ],
+  "skippedExamples": [
+    {
+      "path": "examples/excel/outputs/beautiful_charts.xlsx",
+      "bytes": 18419,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/excel/outputs/charts_demo.xlsx",
+      "bytes": 8904,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/excel/outputs/sales_report.xlsx",
+      "bytes": 3637,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/ppt/models/sun.glb",
+      "bytes": 4343656,
+      "reason": "excluded-large-binary-or-generated-output"
+    },
+    {
+      "path": "examples/ppt/outputs/3d-sun.pptx",
+      "bytes": 34368562,
+      "reason": "excluded-large-binary-or-generated-output"
+    },
+    {
+      "path": "examples/ppt/outputs/beautiful_presentation.pptx",
+      "bytes": 12484,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/ppt/outputs/claude-morph-template-v39.pptx",
+      "bytes": 18184,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/ppt/outputs/claude-morph-template-v40.pptx",
+      "bytes": 18497,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/ppt/outputs/creative-marketing.pptx",
+      "bytes": 13769,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/ppt/outputs/data_presentation.pptx",
+      "bytes": 7113,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/ppt/outputs/gen-animations-pptx.pptx",
+      "bytes": 16630,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/ppt/outputs/gen-video-pptx.pptx",
+      "bytes": 75240,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/word/outputs/complex_formulas.docx",
+      "bytes": 3709,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    },
+    {
+      "path": "examples/word/outputs/complex_tables.docx",
+      "bytes": 2442,
+      "reason": "excluded-non-curated-extension-or-output-model"
+    }
+  ]
+}

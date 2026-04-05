@@ -1,0 +1,3 @@
+officecli create test_smoke.docx
+officecli add test_smoke.docx /body --type paragraph --prop text="Hello from CI"
+officecli get test_smoke.docx /body/p[1]

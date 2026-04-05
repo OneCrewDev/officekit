@@ -1,0 +1,209 @@
+[
+  {
+    "sourceCluster": "Program.cs update/install/skills/config entrypoints",
+    "evidence": "OfficeCLI/src/officecli/Program.cs",
+    "officekitTarget": "packages/cli/src/index.ts + packages/install + packages/skills + packages/core/config",
+    "ownerLane": "lane-2 cli/core shell + lane-4 install/skills/docs",
+    "verification": "unit + integration + e2e install/help flows",
+    "status": "inventory",
+    "notes": "MCP subcommands are explicitly excluded from officekit v1; install/skills/config/update remain required."
+  },
+  {
+    "sourceCluster": "Root command, --json envelope, resident open/close plumbing",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.cs",
+    "officekitTarget": "packages/cli/src/root-command.ts + packages/core/src/resident/* + packages/core/src/output/*",
+    "ownerLane": "lane-2 cli/core shell",
+    "verification": "unit + integration",
+    "status": "inventory",
+    "notes": "Officekit should preserve agent-friendly JSON envelopes and resident-mode ergonomics even if syntax changes."
+  },
+  {
+    "sourceCluster": "Add/remove/move/swap DOM mutation commands",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.Add.cs",
+    "officekitTarget": "packages/cli/src/commands/dom-mutations.ts + format packages",
+    "ownerLane": "lane-2 cli/core shell + lane-3 format adapters",
+    "verification": "integration + differential parity",
+    "status": "inventory",
+    "notes": "Covers insertion positioning, copy-from, force-write, and reordering semantics."
+  },
+  {
+    "sourceCluster": "Set command and property mutation grammar",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.Set.cs",
+    "officekitTarget": "packages/cli/src/commands/set.ts + packages/core/src/property-parser.ts",
+    "ownerLane": "lane-2 cli/core shell + lane-3 format adapters",
+    "verification": "unit + integration",
+    "status": "inventory",
+    "notes": "Property normalization and error handling must align across formats."
+  },
+  {
+    "sourceCluster": "Get/query read commands",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.GetQuery.cs",
+    "officekitTarget": "packages/cli/src/commands/get-query.ts + packages/core/src/selectors/*",
+    "ownerLane": "lane-2 cli/core shell",
+    "verification": "unit + integration + differential parity",
+    "status": "inventory",
+    "notes": "Selector grammar and JSON/text result shaping are parity critical for agents."
+  },
+  {
+    "sourceCluster": "Raw/raw-set/add-part XML fallback commands",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.Raw.cs",
+    "officekitTarget": "packages/cli/src/commands/raw.ts + packages/core/src/raw-xml/*",
+    "ownerLane": "lane-2 cli/core shell + lane-3 format adapters",
+    "verification": "integration + differential parity",
+    "status": "inventory",
+    "notes": "Universal fallback for long-tail OpenXML operations; add-part required for chart/header/footer creation."
+  },
+  {
+    "sourceCluster": "Validate/check quality commands",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.Check.cs",
+    "officekitTarget": "packages/cli/src/commands/validate-check.ts + packages/core/src/validation/*",
+    "ownerLane": "lane-2 cli/core shell + lane-4 preview/docs",
+    "verification": "integration + fixture-backed issue snapshots",
+    "status": "inventory",
+    "notes": "Covers OpenXML validation plus higher-level layout/overflow issue reporting."
+  },
+  {
+    "sourceCluster": "Batch command / one-open-save-cycle execution",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.Batch.cs + Core/BatchTypes.cs",
+    "officekitTarget": "packages/cli/src/commands/batch.ts + packages/core/src/batch/*",
+    "ownerLane": "lane-2 cli/core shell",
+    "verification": "unit + integration + e2e",
+    "status": "inventory",
+    "notes": "Needs stdin, file, inline JSON array, and force-continue semantics."
+  },
+  {
+    "sourceCluster": "Create/import/merge commands",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.Import.cs + Core/TemplateMerger.cs",
+    "officekitTarget": "packages/cli/src/commands/create-import-merge.ts + packages/core/src/templates/*",
+    "ownerLane": "lane-2 cli/core shell + lane-3 format adapters",
+    "verification": "integration + fixture-backed template scenarios",
+    "status": "inventory",
+    "notes": "Includes CSV/TSV import, blank doc creation, and JSON template merge across docx/xlsx/pptx."
+  },
+  {
+    "sourceCluster": "View/watch/unwatch/preview command surface",
+    "evidence": "OfficeCLI/src/officecli/CommandBuilder.View.cs + CommandBuilder.Watch.cs + Core/HtmlPreviewHelper.cs + Core/Watch*.cs",
+    "officekitTarget": "packages/preview/src/* + packages/cli/src/commands/view-watch.ts",
+    "ownerLane": "lane-4 preview/skills/install/docs",
+    "verification": "integration + rendered snapshot + manual browser smoke",
+    "status": "inventory",
+    "notes": "HTML preview, outline/text/stats/issues/svg/forms modes, and live watch refresh are explicit parity targets."
+  },
+  {
+    "sourceCluster": "Built-in help and wiki-backed help surfaces",
+    "evidence": "OfficeCLI/src/officecli/HelpCommands.cs + WikiHelpLoader.cs",
+    "officekitTarget": "packages/docs/src/help/* + packages/cli/src/help-command.ts",
+    "ownerLane": "lane-4 preview/skills/install/docs",
+    "verification": "docs acceptance + CLI golden output tests",
+    "status": "inventory",
+    "notes": "Format-prefixed deep help must survive the migration even if rendered from new source files."
+  },
+  {
+    "sourceCluster": "Word handler domain boundary",
+    "evidence": "OfficeCLI/src/officecli/Handlers/WordHandler.cs",
+    "officekitTarget": "packages/word/src/word-handler.ts",
+    "ownerLane": "lane-3 format adapters",
+    "verification": "format integration + differential parity",
+    "status": "inventory",
+    "notes": "Owns Word DOM/raw/query/set/add/remove/batch semantics."
+  },
+  {
+    "sourceCluster": "Excel handler domain boundary",
+    "evidence": "OfficeCLI/src/officecli/Handlers/ExcelHandler.cs",
+    "officekitTarget": "packages/excel/src/excel-handler.ts",
+    "ownerLane": "lane-3 format adapters",
+    "verification": "format integration + differential parity",
+    "status": "inventory",
+    "notes": "Owns worksheets, ranges, formulas, charts, pivot tables, import, raw filtering, and validation."
+  },
+  {
+    "sourceCluster": "PowerPoint handler domain boundary",
+    "evidence": "OfficeCLI/src/officecli/Handlers/PowerPointHandler.cs",
+    "officekitTarget": "packages/ppt/src/ppt-handler.ts",
+    "ownerLane": "lane-3 format adapters",
+    "verification": "format integration + differential parity + preview snapshots",
+    "status": "inventory",
+    "notes": "Owns slides, shapes, connectors, media, charts, notes, placeholders, and preview-sensitive rendering flows."
+  },
+  {
+    "sourceCluster": "Document abstraction + factory + shared node model",
+    "evidence": "OfficeCLI/src/officecli/Core/DocumentHandlerFactory.cs + Core/IDocumentHandler.cs + Core/DocumentNode.cs",
+    "officekitTarget": "packages/core/src/document-model/*",
+    "ownerLane": "lane-2 cli/core shell",
+    "verification": "unit + integration",
+    "status": "inventory",
+    "notes": "Critical seam for thin CLI shell and reusable format adapters."
+  },
+  {
+    "sourceCluster": "Selector/query/path semantics",
+    "evidence": "OfficeCLI/src/officecli/Core/PathAliases.cs + Core/AttributeFilter.cs + Core/GenericXmlQuery.cs",
+    "officekitTarget": "packages/core/src/selectors/*",
+    "ownerLane": "lane-2 cli/core shell",
+    "verification": "unit + differential parity",
+    "status": "inventory",
+    "notes": "Cross-format semantics gate; must be validated before broad handler migration."
+  },
+  {
+    "sourceCluster": "Units, EMU, spacing, colors, parse helpers, theme resolution",
+    "evidence": "OfficeCLI/src/officecli/Core/Units.cs + Core/EmuConverter.cs + Core/SpacingConverter.cs + Core/ColorMath.cs + Core/ParseHelpers.cs + Core/ThemeColorResolver.cs",
+    "officekitTarget": "packages/core/src/values/*",
+    "ownerLane": "lane-2 cli/core shell",
+    "verification": "unit",
+    "status": "inventory",
+    "notes": "Foundational parsing/formatting semantics reused by all document packages."
+  },
+  {
+    "sourceCluster": "Output envelopes, CLI exceptions, issue modeling",
+    "evidence": "OfficeCLI/src/officecli/Core/OutputFormatter.cs + Core/CliException.cs + Core/DocumentIssue.cs",
+    "officekitTarget": "packages/core/src/output/*",
+    "ownerLane": "lane-2 cli/core shell",
+    "verification": "unit + snapshot",
+    "status": "inventory",
+    "notes": "Agent-facing result and error shapes need regression coverage."
+  },
+  {
+    "sourceCluster": "Raw XML execution + extended/theme/document properties helpers",
+    "evidence": "OfficeCLI/src/officecli/Core/RawXmlHelper.cs + Core/ExtendedPropertiesHandler.cs + Core/ThemeHandler.cs",
+    "officekitTarget": "packages/core/src/raw-xml/* + format packages",
+    "ownerLane": "lane-2 cli/core shell + lane-3 format adapters",
+    "verification": "integration + differential parity",
+    "status": "inventory",
+    "notes": "Supports long-tail fallback and metadata/theme/property editing across formats."
+  },
+  {
+    "sourceCluster": "Charts, formulas, styles, pivot helpers",
+    "evidence": "OfficeCLI/src/officecli/Core/Chart*.cs + Core/Formula*.cs + Core/ExcelStyleManager.cs + Core/PivotTableHelper.cs",
+    "officekitTarget": "packages/excel/src/* + packages/ppt/src/chart/* + packages/word/src/chart/*",
+    "ownerLane": "lane-3 format adapters",
+    "verification": "format integration + differential parity",
+    "status": "inventory",
+    "notes": "Large helper cluster covering chart creation/inspection/SVG rendering, formula evaluation, style management, and pivots."
+  },
+  {
+    "sourceCluster": "Resident client/server + CLI logging",
+    "evidence": "OfficeCLI/src/officecli/Core/ResidentClient.cs + Core/ResidentServer.cs + Core/CliLogger.cs",
+    "officekitTarget": "packages/core/src/resident/* + packages/core/src/logging/*",
+    "ownerLane": "lane-2 cli/core shell",
+    "verification": "integration + e2e",
+    "status": "inventory",
+    "notes": "Resident mode is a headline README feature and must be testable as a local workflow."
+  },
+  {
+    "sourceCluster": "Installer / skills / updater surfaces",
+    "evidence": "OfficeCLI/src/officecli/Core/Installer.cs + Core/SkillInstaller.cs + Core/UpdateChecker.cs",
+    "officekitTarget": "packages/install/src/* + packages/skills/src/* + packages/core/src/config/update.ts",
+    "ownerLane": "lane-4 preview/skills/install/docs",
+    "verification": "integration + docs acceptance",
+    "status": "inventory",
+    "notes": "Auto-detect agent tooling, install skill assets, manage PATH/config, and background update checks."
+  },
+  {
+    "sourceCluster": "MCP server and installer",
+    "evidence": "OfficeCLI/src/officecli/Core/McpServer.cs + Core/McpInstaller.cs + Program.cs mcp branch",
+    "officekitTarget": "excluded",
+    "ownerLane": "n/a",
+    "verification": "n/a",
+    "status": "excluded",
+    "notes": "PRD explicitly excludes MCP from officekit v1 parity."
+  }
+]
