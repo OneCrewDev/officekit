@@ -91,6 +91,24 @@ describe("officekit CLI scaffold", () => {
     expect(result.stdout).toContain("\"42\"");
   });
 
+  test("preserves authored Excel formulas in created workbooks", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-formula-"));
+    const filePath = path.join(dir, "formula.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=21"]);
+    await runCli(["set", filePath, "/Sheet1/B1", "--prop", "formula==SUM(A1:A1)", "--prop", "value=21"]);
+
+    const result = await runCli(["get", filePath, "/Sheet1/B1", "--json"]);
+    const outline = await runCli(["view", filePath, "outline"]);
+    const xml = readStoredZip(await readFile(filePath)).get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(result.stdout).toContain('"formula": "SUM(A1:A1)"');
+    expect(result.stdout).toContain('"value": "21"');
+    expect(outline.stdout).toContain("B1: 21 (formula=SUM(A1:A1))");
+    expect(xml).toContain("<f>SUM(A1:A1)</f>");
+    expect(xml).toContain("<v>21</v>");
+  });
+
   test("creates and mutates a PowerPoint document vertical slice", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-ppt-"));
     const filePath = path.join(dir, "demo.pptx");
@@ -165,6 +183,19 @@ describe("officekit CLI scaffold", () => {
 
     const zipEntries = readStoredZip(await readFile(filePath));
     expect(zipEntries.has("officekit/document.json")).toBe(true);
+  });
+
+  test("reads metadata-free Excel formulas from OOXML workbooks", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-formula-fallback-"));
+    const filePath = path.join(dir, "formula-fallback.xlsx");
+    await writeFile(filePath, buildExternalExcelFormulaZip());
+
+    const result = await runCli(["get", filePath, "/Sheet1/B1", "--json"]);
+    const outline = await runCli(["view", filePath, "outline"]);
+
+    expect(result.stdout).toContain('"formula": "SUM(A1:A1)"');
+    expect(result.stdout).toContain('"value": "21"');
+    expect(outline.stdout).toContain("B1: 21 (formula=SUM(A1:A1))");
   });
 
   test("reads and mutates a metadata-free standard PowerPoint OOXML file", async () => {
@@ -388,6 +419,54 @@ function buildExternalExcelZip(ref: string, value: string) {
       data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData><row r="1"><c r="${ref}" t="inlineStr"><is><t>${value}</t></is></c></row></sheetData>
+</worksheet>`),
+    },
+  ]);
+}
+
+function buildExternalExcelFormulaZip() {
+  return createStoredZip([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`),
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/workbook.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`),
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>21</v></c>
+      <c r="B1"><f>SUM(A1:A1)</f><v>21</v></c>
+    </row>
+  </sheetData>
 </worksheet>`),
     },
   ]);

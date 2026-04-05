@@ -30,9 +30,14 @@ export interface WordTableNode extends WordTable {
 
 export type WordBodyNode = WordParagraphNode | WordTableNode;
 
+export interface ExcelCell {
+  value: string;
+  formula?: string;
+}
+
 export interface ExcelSheet {
   name: string;
-  cells: Record<string, string>;
+  cells: Record<string, ExcelCell>;
 }
 
 export interface PptShape {
@@ -110,7 +115,7 @@ export async function addDocumentNode(filePath: string, targetPath: string, opti
       const sheetName = targetPath.replace(/^\//, "") || options.props.sheet || "Sheet1";
       const sheet = ensureSheet(document, sheetName);
       const ref = (options.props.ref ?? options.props.cell ?? "A1").toUpperCase();
-      sheet.cells[ref] = options.props.value ?? options.props.text ?? "";
+      sheet.cells[ref] = mergeExcelCell(sheet.cells[ref], options.props);
       break;
     }
     case "powerpoint": {
@@ -160,7 +165,7 @@ export async function setDocumentNode(filePath: string, targetPath: string, opti
     }
   } else if (document.format === "excel") {
     const { sheet, cellRef } = resolveExcelPath(document, targetPath);
-    sheet.cells[cellRef] = options.props.value ?? options.props.text ?? sheet.cells[cellRef] ?? "";
+    sheet.cells[cellRef] = mergeExcelCell(sheet.cells[cellRef], options.props);
   } else {
     const shapeMatch = /^\/slide\[(\d+)\]\/shape\[(\d+)\]$/.exec(targetPath);
     const slideMatch = /^\/slide\[(\d+)\]$/.exec(targetPath);
@@ -269,7 +274,12 @@ export function renderDocumentHtml(document: OfficekitDocument): string {
   }
 
   if (document.format === "excel") {
-    const rows = document.excel!.sheets.flatMap((sheet) => Object.entries(sheet.cells).map(([ref, value]) => `<tr><th>${escapeHtml(sheet.name)}!${escapeHtml(ref)}</th><td>${escapeHtml(value)}</td></tr>`));
+    const rows = document.excel!.sheets.flatMap((sheet) =>
+      Object.entries(sheet.cells).map(([ref, cell]) => {
+        const detail = [cell.value, cell.formula ? `formula=${cell.formula}` : ""].filter(Boolean).join(" · ");
+        return `<tr><th>${escapeHtml(sheet.name)}!${escapeHtml(ref)}</th><td>${escapeHtml(detail)}</td></tr>`;
+      }),
+    );
     return `<section data-format="excel"><table><tbody>${rows.join("") || '<tr><td colspan="2"><em>Empty workbook</em></td></tr>'}</tbody></table></section>`;
   }
 
@@ -308,7 +318,8 @@ export function renderDocumentOutline(document: OfficekitDocument): string {
       lines.push(`Sheet ${sheet.name}`);
       const refs = Object.keys(sheet.cells).sort();
       for (const ref of refs) {
-        lines.push(`  ${ref}: ${sheet.cells[ref]}`);
+        const cell = sheet.cells[ref];
+        lines.push(`  ${ref}: ${cell.value}${cell.formula ? ` (formula=${cell.formula})` : ""}`);
       }
     }
     return lines.join("\n") || "Workbook is empty.";
@@ -359,7 +370,7 @@ function createBlankDocument(format: SupportedFormat): OfficekitDocument {
     updatedAt: new Date().toISOString(),
   };
   if (format === "word") return { ...base, word: { body: [] } };
-  if (format === "excel") return { ...base, excel: { sheets: [{ name: "Sheet1", cells: {} as Record<string, string> }] } };
+  if (format === "excel") return { ...base, excel: { sheets: [{ name: "Sheet1", cells: {} as Record<string, ExcelCell> }] } };
   return { ...base, powerpoint: { slides: [] as PptSlide[] } };
 }
 
@@ -461,7 +472,8 @@ function materializePath(document: OfficekitDocument, targetPath: string) {
     if (targetPath === "/workbook") return document.excel;
     const { sheet, cellRef } = resolveExcelPath(document, targetPath);
     if (!cellRef) return sheet;
-    return { ref: cellRef, value: sheet.cells[cellRef] ?? null };
+    const cell = sheet.cells[cellRef];
+    return cell ? { ref: cellRef, ...cell } : { ref: cellRef, value: null };
   }
 
   if (document.format === "powerpoint") {
@@ -670,10 +682,10 @@ function renderWorkbookRels(document: OfficekitDocument) {
 function renderSheetXml(sheet: ExcelSheet) {
   const entries = Object.entries(sheet.cells).sort(([a], [b]) => a.localeCompare(b));
   const rows = new Map<number, string[]>();
-  for (const [ref, value] of entries) {
+  for (const [ref, cell] of entries) {
     const row = Number(/\d+/.exec(ref)?.[0] ?? "1");
     const cells = rows.get(row) ?? [];
-    cells.push(`<c r="${ref}" t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`);
+    cells.push(renderExcelCellXml(ref, cell));
     rows.set(row, cells);
   }
   const xmlRows = [...rows.entries()].sort(([a], [b]) => a - b).map(([rowIndex, cells]) => `<row r="${rowIndex}">${cells.join("")}</row>`).join("");
@@ -681,6 +693,14 @@ function renderSheetXml(sheet: ExcelSheet) {
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData>${xmlRows}</sheetData>
 </worksheet>`;
+}
+
+function renderExcelCellXml(ref: string, cell: ExcelCell) {
+  if (cell.formula) {
+    const valueXml = cell.value !== "" ? `<v>${escapeXml(cell.value)}</v>` : "";
+    return `<c r="${ref}"><f>${escapeXml(normalizeFormula(cell.formula))}</f>${valueXml}</c>`;
+  }
+  return `<c r="${ref}" t="inlineStr"><is><t>${escapeXml(cell.value)}</t></is></c>`;
 }
 
 function renderPptContentTypes(document: OfficekitDocument) {
@@ -791,6 +811,16 @@ function parseExternalDocument(zip: Map<string, Buffer>, filePath: string): Offi
 function normalizeDocument(document: OfficekitDocument): OfficekitDocument {
   if (document.word) {
     document.word = normalizeWordState(document.word);
+  }
+  if (document.excel) {
+    document.excel = {
+      sheets: (document.excel.sheets ?? []).map((sheet) => ({
+        ...sheet,
+        cells: Object.fromEntries(
+          Object.entries(sheet.cells ?? {}).map(([ref, cell]) => [ref, normalizeExcelCell(cell)]),
+        ),
+      })),
+    };
   }
   return document;
 }
@@ -982,7 +1012,7 @@ function readRelationships(zip: Map<string, Buffer>, entryName: string) {
 
 function parseSheetCells(xml: string, zip: Map<string, Buffer>) {
   const sharedStrings = parseSharedStrings(zip);
-  const cells: Record<string, string> = {};
+  const cells: Record<string, ExcelCell> = {};
   for (const match of xml.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
     const attributes = match[1];
     const body = match[2];
@@ -991,6 +1021,7 @@ function parseSheetCells(xml: string, zip: Map<string, Buffer>) {
     const ref = refMatch[1].toUpperCase();
     const typeMatch = /t="([^"]+)"/.exec(attributes);
     const type = typeMatch?.[1] ?? "";
+    const formula = (/<f\b[^>]*>([\s\S]*?)<\/f>/.exec(body)?.[1] ?? "").trim();
     let value = "";
     if (type === "inlineStr") {
       value = extractTexts(body).join("");
@@ -1000,7 +1031,10 @@ function parseSheetCells(xml: string, zip: Map<string, Buffer>) {
     } else {
       value = decodeXml((/<v>([\s\S]*?)<\/v>/.exec(body)?.[1] ?? "").trim());
     }
-    cells[ref] = value;
+    cells[ref] = {
+      value,
+      ...(formula ? { formula: decodeXml(formula) } : {}),
+    };
   }
   return cells;
 }
@@ -1048,4 +1082,27 @@ function decodeXml(value: string) {
     .replaceAll("&quot;", '"')
     .replaceAll("&apos;", "'")
     .replaceAll("&amp;", "&");
+}
+
+function normalizeExcelCell(cell: string | ExcelCell | undefined): ExcelCell {
+  if (typeof cell === "string") {
+    return { value: cell };
+  }
+  return {
+    value: cell?.value ?? "",
+    ...(cell?.formula ? { formula: normalizeFormula(cell.formula) } : {}),
+  };
+}
+
+function mergeExcelCell(existing: string | ExcelCell | undefined, props: Record<string, string>): ExcelCell {
+  const base = normalizeExcelCell(existing);
+  const formula = props.formula === undefined ? base.formula : normalizeFormula(props.formula);
+  return {
+    value: props.value ?? props.text ?? base.value,
+    ...(formula ? { formula } : {}),
+  };
+}
+
+function normalizeFormula(formula: string) {
+  return formula.replace(/^=/, "");
 }
