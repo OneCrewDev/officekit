@@ -388,6 +388,73 @@ describe("officekit CLI scaffold", () => {
     expect(sheetXml).toContain("<v>303</v>");
   });
 
+  test("keeps workbook settings, styles.xml, formula cells, and style ids together on a real harvested OfficeCLI workbook", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-real-combined-fixture-"));
+    const fixturePath = path.resolve(
+      import.meta.dir,
+      "../../../fixtures/officecli-source/examples/excel/outputs/beautiful_charts.xlsx",
+    );
+    const filePath = path.join(dir, "beautiful_charts.xlsx");
+    await writeFile(filePath, await readFile(fixturePath));
+
+    await runCli([
+      "set",
+      filePath,
+      "/workbook",
+      "--prop",
+      "date1904=true",
+      "--prop",
+      "codeName=OfficekitCharts",
+      "--prop",
+      "filterPrivacy=true",
+      "--prop",
+      "showObjects=all",
+      "--prop",
+      "calc.mode=autoNoTable",
+      "--prop",
+      "workbook.lockStructure=true",
+    ]);
+    await runCli([
+      "set",
+      filePath,
+      "/Sheet1/G2",
+      "--prop",
+      "formula==SUM(B2:E2)",
+      "--prop",
+      "value=303",
+      "--prop",
+      "styleId=10",
+    ]);
+
+    const workbook = await runCli(["get", filePath, "/workbook", "--json"]);
+    const cell = await runCli(["get", filePath, "/Sheet1/G2", "--json"]);
+    const zip = readStoredZip(await readFile(filePath));
+    const workbookXml = zip.get("xl/workbook.xml")!.toString("utf8");
+    const stylesXml = zip.get("xl/styles.xml")!.toString("utf8");
+    const sheetXml = zip.get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(workbook.stdout).toContain('"date1904": true');
+    expect(workbook.stdout).toContain('"codeName": "OfficekitCharts"');
+    expect(workbook.stdout).toContain('"filterPrivacy": true');
+    expect(workbook.stdout).toContain('"showObjects": "all"');
+    expect(workbook.stdout).toContain('"calcMode": "autoNoTable"');
+    expect(workbook.stdout).toContain('"lockStructure": true');
+    expect(cell.stdout).toContain('"styleId": "10"');
+    expect(cell.stdout).toContain('"formula": "SUM(B2:E2)"');
+    expect(cell.stdout).toContain('"value": "303"');
+    expect(workbookXml).toContain('date1904="1"');
+    expect(workbookXml).toContain('codeName="OfficekitCharts"');
+    expect(workbookXml).toContain('filterPrivacy="1"');
+    expect(workbookXml).toContain('showObjects="all"');
+    expect(workbookXml).toContain('calcMode="autoNoTable"');
+    expect(workbookXml).toContain('lockStructure="1"');
+    expect(stylesXml).toContain("cellXfs");
+    expect(sheetXml).toContain('r="G2"');
+    expect(sheetXml).toContain(' s="10"');
+    expect(sheetXml).toContain("<f>SUM(B2:E2)</f>");
+    expect(sheetXml).toContain("<v>303</v>");
+  });
+
   test("mutates a real harvested OfficeCLI formula workbook without dropping formulas", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-real-formula-fixture-"));
     const fixturePath = path.resolve(
