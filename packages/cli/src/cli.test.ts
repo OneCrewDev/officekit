@@ -503,6 +503,31 @@ describe("officekit CLI scaffold", () => {
     expect(sheetXml).toContain("<v>412</v>");
   });
 
+  test("mutates a second real harvested styled workbook without dropping existing style ids", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-real-style-fixture-2-"));
+    const fixturePath = path.resolve(
+      import.meta.dir,
+      "../../../fixtures/officecli-source/examples/excel/outputs/charts_demo.xlsx",
+    );
+    const filePath = path.join(dir, "charts_demo.xlsx");
+    await writeFile(filePath, await readFile(fixturePath));
+
+    const before = await runCli(["get", filePath, "/Sheet1/B2", "--json"]);
+    await runCli(["set", filePath, "/Sheet1/B2", "--prop", "value=121"]);
+    const after = await runCli(["get", filePath, "/Sheet1/B2", "--json"]);
+    const zip = readStoredZip(await readFile(filePath));
+    const stylesXml = zip.get("xl/styles.xml")!.toString("utf8");
+    const sheetXml = zip.get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(before.stdout).toContain('"styleId": "7"');
+    expect(before.stdout).toContain('"value": "120"');
+    expect(after.stdout).toContain('"styleId": "7"');
+    expect(after.stdout).toContain('"value": "121"');
+    expect(stylesXml).toContain("cellXfs");
+    expect(sheetXml).toContain('r="B2" s="7"');
+    expect(sheetXml).toContain("<v>121</v>");
+  });
+
   test("reads and mutates a metadata-free standard PowerPoint OOXML file", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-ppt-fallback-"));
     const filePath = path.join(dir, "fallback.pptx");
