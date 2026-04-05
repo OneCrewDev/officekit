@@ -537,6 +537,41 @@ describe("officekit CLI scaffold", () => {
     expect(outline.stdout).toContain("A1: Shared hello");
   });
 
+  test("imports CSV into an Excel sheet and enables header affordances", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-import-"));
+    const filePath = path.join(dir, "import.xlsx");
+    const csvPath = path.join(dir, "sales.csv");
+    await writeFile(csvPath, "Month,Sales\nJan,120\nFeb,135\n");
+    await runCli(["create", filePath]);
+
+    const result = await runCli([
+      "import",
+      filePath,
+      "/Sheet1",
+      csvPath,
+      "--format",
+      "csv",
+      "--header",
+      "--start-cell",
+      "B2",
+    ]);
+
+    const workbook = await runCli(["view", filePath, "outline"]);
+    const cell = await runCli(["get", filePath, "/Sheet1/C3", "--json"]);
+    const sheetXml = readStoredZip(await readFile(filePath)).get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(result.stdout).toContain('"importedRows": 3');
+    expect(result.stdout).toContain('"importedCols": 2');
+    expect(result.stdout).toContain('"autoFilter": "B2:C4"');
+    expect(result.stdout).toContain('"freezeTopLeftCell": "B3"');
+    expect(workbook.stdout).toContain("Sheet Sheet1");
+    expect(cell.stdout).toContain('"value": "120"');
+    expect(sheetXml).toContain('autoFilter ref="B2:C4"');
+    expect(sheetXml).toContain('topLeftCell="B3"');
+    expect(sheetXml).toContain('r="B2"');
+    expect(sheetXml).toContain('r="C4"');
+  });
+
   test("watch keeps a preview server alive until interrupted", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-watch-"));
     const filePath = path.join(dir, "watch.docx");

@@ -1,4 +1,4 @@
-import { createDocument, addDocumentNode, checkDocument, getDocumentNode, parseProps, rawDocument, removeDocumentNode, renderDocumentHtml, setDocumentNode, viewDocument } from "./document-store.js";
+import { createDocument, addDocumentNode, checkDocument, getDocumentNode, importDelimitedData, parseProps, rawDocument, removeDocumentNode, renderDocumentHtml, setDocumentNode, viewDocument } from "./document-store.js";
 import { UnsupportedCapabilityError, UsageError } from "./errors.js";
 
 export interface CommandResult {
@@ -78,6 +78,59 @@ export async function executeCommand(argv: string[]): Promise<CommandResult> {
     const filePath = rest[0];
     if (!filePath) throw new UsageError("check requires <file>.");
     return { exitCode: 0, stdout: JSON.stringify(await checkDocument(filePath), null, 2) };
+  }
+
+  if (command === "import") {
+    const filePath = rest[0];
+    const parentPath = rest[1];
+    if (!filePath || !parentPath) {
+      throw new UsageError("import requires <file.xlsx> <parent-path> and a source file or --file.");
+    }
+
+    let sourceFile: string | undefined;
+    let delimiter = ",";
+    let hasHeader = false;
+    let startCell = "A1";
+
+    for (let index = 2; index < rest.length; index += 1) {
+      const token = rest[index];
+      if (token === "--file") {
+        sourceFile = rest[index + 1];
+        index += 1;
+        continue;
+      }
+      if (token === "--format") {
+        const format = (rest[index + 1] ?? "csv").toLowerCase();
+        delimiter = format === "tsv" ? "\t" : ",";
+        index += 1;
+        continue;
+      }
+      if (token === "--header") {
+        hasHeader = true;
+        continue;
+      }
+      if (token === "--start-cell") {
+        startCell = rest[index + 1] ?? "A1";
+        index += 1;
+        continue;
+      }
+      if (!token.startsWith("--") && !sourceFile) {
+        sourceFile = token;
+      }
+    }
+
+    if (!sourceFile) {
+      throw new UsageError("import currently requires a source CSV/TSV file.", "Use: officekit import book.xlsx /Sheet1 data.csv --format csv");
+    }
+
+    const fs = await import("node:fs/promises");
+    const content = await fs.readFile(sourceFile, "utf8");
+    const result = await importDelimitedData(filePath, parentPath, content, {
+      delimiter,
+      hasHeader,
+      startCell,
+    });
+    return { exitCode: 0, stdout: JSON.stringify(result, null, 2) };
   }
 
   if (command === "watch") {

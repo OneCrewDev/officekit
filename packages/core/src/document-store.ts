@@ -57,6 +57,8 @@ export interface ExcelWorkbookSettings {
 export interface ExcelSheet {
   name: string;
   cells: Record<string, ExcelCell>;
+  autoFilter?: string;
+  freezeTopLeftCell?: string;
 }
 
 export interface PptShape {
@@ -100,6 +102,12 @@ export interface CommandOptions {
   props: Record<string, string>;
   json?: boolean;
   mode?: string;
+}
+
+export interface ImportOptions {
+  delimiter: string;
+  hasHeader: boolean;
+  startCell: string;
 }
 
 export async function createDocument(filePath: string) {
@@ -158,6 +166,55 @@ export async function addDocumentNode(filePath: string, targetPath: string, opti
   stampDocument(document);
   await persistDocument(filePath, document);
   return materializePath(document, targetPath);
+}
+
+export async function importDelimitedData(
+  filePath: string,
+  parentPath: string,
+  content: string,
+  options: ImportOptions,
+) {
+  const document = await loadDocument(filePath);
+  if (document.format !== "excel") {
+    throw new UsageError("import currently supports only .xlsx files.");
+  }
+
+  const sheetName = parentPath.replace(/^\//, "") || "Sheet1";
+  const sheet = ensureSheet(document, sheetName);
+  const rows = parseDelimitedRows(content, options.delimiter);
+  if (rows.length === 0) {
+    return { importedRows: 0, importedCols: 0, sheet: sheetName, startCell: options.startCell };
+  }
+
+  const { column, row } = parseCellAddress(options.startCell.toUpperCase());
+  const startColumnIndex = columnNameToIndex(column);
+  let maxColumns = 0;
+
+  for (const [rowOffset, values] of rows.entries()) {
+    maxColumns = Math.max(maxColumns, values.length);
+    for (const [columnOffset, rawValue] of values.entries()) {
+      const ref = `${indexToColumnName(startColumnIndex + columnOffset)}${row + rowOffset}`;
+      sheet.cells[ref] = inferImportedCell(rawValue);
+    }
+  }
+
+  if (options.hasHeader && rows.length > 0) {
+    const endColumn = indexToColumnName(startColumnIndex + Math.max(maxColumns - 1, 0));
+    const endRow = row + rows.length - 1;
+    sheet.autoFilter = `${column}${row}:${endColumn}${endRow}`;
+    sheet.freezeTopLeftCell = `${column}${row + 1}`;
+  }
+
+  stampDocument(document);
+  await persistDocument(filePath, document);
+  return {
+    importedRows: rows.length,
+    importedCols: maxColumns,
+    sheet: sheetName,
+    startCell: options.startCell.toUpperCase(),
+    ...(sheet.autoFilter ? { autoFilter: sheet.autoFilter } : {}),
+    ...(sheet.freezeTopLeftCell ? { freezeTopLeftCell: sheet.freezeTopLeftCell } : {}),
+  };
 }
 
 export async function setDocumentNode(filePath: string, targetPath: string, options: CommandOptions) {
@@ -781,9 +838,15 @@ function renderSheetXml(sheet: ExcelSheet) {
     rows.set(row, cells);
   }
   const xmlRows = [...rows.entries()].sort(([a], [b]) => a - b).map(([rowIndex, cells]) => `<row r="${rowIndex}">${cells.join("")}</row>`).join("");
+  const sheetViews = sheet.freezeTopLeftCell
+    ? `<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="${escapeXml(sheet.freezeTopLeftCell)}" state="frozen" activePane="bottomLeft"/></sheetView></sheetViews>`
+    : "";
+  const autoFilter = sheet.autoFilter ? `<autoFilter ref="${escapeXml(sheet.autoFilter)}"/>` : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  ${sheetViews}
   <sheetData>${xmlRows}</sheetData>
+  ${autoFilter}
 </worksheet>`;
 }
 
@@ -912,6 +975,8 @@ function normalizeDocument(document: OfficekitDocument): OfficekitDocument {
         cells: Object.fromEntries(
           Object.entries(sheet.cells ?? {}).map(([ref, cell]) => [ref, normalizeExcelCell(cell)]),
         ),
+        ...(sheet.autoFilter ? { autoFilter: sheet.autoFilter } : {}),
+        ...(sheet.freezeTopLeftCell ? { freezeTopLeftCell: sheet.freezeTopLeftCell } : {}),
       })),
       ...(document.excel.settings ? { settings: document.excel.settings } : {}),
       ...(document.excel.styleSheetXml ? { styleSheetXml: document.excel.styleSheetXml } : {}),
@@ -970,6 +1035,7 @@ function parseExcelDocument(zip: Map<string, Buffer>): OfficekitDocument {
     return {
       name,
       cells: parseSheetCells(sheetXml, zip),
+      ...parseSheetFeatures(sheetXml),
     };
   });
 
@@ -1140,6 +1206,15 @@ function parseSheetCells(xml: string, zip: Map<string, Buffer>) {
     };
   }
   return cells;
+}
+
+function parseSheetFeatures(xml: string) {
+  const autoFilter = /<(?:\w+:)?autoFilter\b[^>]*ref="([^"]+)"/.exec(xml)?.[1];
+  const freezeTopLeftCell = /<(?:\w+:)?pane\b[^>]*topLeftCell="([^"]+)"/.exec(xml)?.[1];
+  return {
+    ...(autoFilter ? { autoFilter } : {}),
+    ...(freezeTopLeftCell ? { freezeTopLeftCell } : {}),
+  };
 }
 
 function parseWorkbookSettings(xml: string): ExcelWorkbookSettings {
@@ -1343,4 +1418,106 @@ function normalizeCalcMode(value: string) {
 function normalizeRefMode(value: string) {
   const normalized = value.trim().toUpperCase();
   return normalized === "R1C1" ? "R1C1" : "A1";
+}
+
+function parseDelimitedRows(content: string, delimiter: string) {
+  const rows: string[][] = [];
+  if (!content) return rows;
+  if (content.charCodeAt(0) === 0xfeff) {
+    content = content.slice(1);
+  }
+
+  const currentRow: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    if (inQuotes) {
+      if (char === '"') {
+        if (content[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (char === delimiter) {
+      currentRow.push(field);
+      field = "";
+      continue;
+    }
+    if (char === "\n" || char === "\r") {
+      if (char === "\r" && content[index + 1] === "\n") {
+        index += 1;
+      }
+      currentRow.push(field);
+      field = "";
+      if (!(currentRow.length === 1 && currentRow[0] === "")) {
+        rows.push([...currentRow]);
+      }
+      currentRow.length = 0;
+      continue;
+    }
+    field += char;
+  }
+
+  if (field.length > 0 || currentRow.length > 0) {
+    currentRow.push(field);
+    if (!(currentRow.length === 1 && currentRow[0] === "")) {
+      rows.push([...currentRow]);
+    }
+  }
+
+  return rows;
+}
+
+function parseCellAddress(value: string) {
+  const match = /^([A-Z]+)(\d+)$/.exec(value);
+  if (!match) {
+    throw new UsageError(`Invalid cell address '${value}'.`, "Use an address like A1.");
+  }
+  return { column: match[1], row: Number(match[2]) };
+}
+
+function columnNameToIndex(column: string) {
+  let result = 0;
+  for (const char of column) {
+    result = result * 26 + (char.charCodeAt(0) - 64);
+  }
+  return result;
+}
+
+function indexToColumnName(index: number) {
+  let value = index;
+  let column = "";
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    column = String.fromCharCode(65 + remainder) + column;
+    value = Math.floor((value - 1) / 26);
+  }
+  return column;
+}
+
+function inferImportedCell(rawValue: string): ExcelCell {
+  if (rawValue === "") return { value: "" };
+  if (rawValue.startsWith("=")) {
+    return { value: "", formula: normalizeFormula(rawValue) };
+  }
+  if (/^(true|false)$/i.test(rawValue)) {
+    return { value: rawValue.toUpperCase() === "TRUE" ? "1" : "0" };
+  }
+  if (!Number.isNaN(Number(rawValue))) {
+    return { value: rawValue };
+  }
+  return { value: rawValue };
 }
