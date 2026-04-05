@@ -41,6 +41,17 @@ export interface ExcelWorkbookSettings {
   codeName?: string;
   filterPrivacy?: boolean;
   showObjects?: string;
+  backupFile?: boolean;
+  dateCompatibility?: boolean;
+  calcMode?: string;
+  iterate?: boolean;
+  iterateCount?: number;
+  iterateDelta?: number;
+  fullPrecision?: boolean;
+  fullCalcOnLoad?: boolean;
+  refMode?: string;
+  lockStructure?: boolean;
+  lockWindows?: boolean;
 }
 
 export interface ExcelSheet {
@@ -687,13 +698,17 @@ function renderExcelRels() {
 
 function renderWorkbookXml(document: OfficekitDocument) {
   const workbookPr = renderWorkbookProperties(document.excel?.settings);
+  const calcPr = renderCalculationProperties(document.excel?.settings);
+  const workbookProtection = renderWorkbookProtection(document.excel?.settings);
   const sheets = document.excel!.sheets
     .map((sheet, index) => `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`)
     .join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   ${workbookPr}
+  ${workbookProtection}
   <sheets>${sheets}</sheets>
+  ${calcPr}
 </workbook>`;
 }
 
@@ -720,9 +735,40 @@ function renderWorkbookProperties(settings?: ExcelWorkbookSettings) {
     settings.codeName ? `codeName="${escapeXml(settings.codeName)}"` : "",
     settings.filterPrivacy !== undefined ? `filterPrivacy="${settings.filterPrivacy ? 1 : 0}"` : "",
     settings.showObjects ? `showObjects="${escapeXml(settings.showObjects)}"` : "",
+    settings.backupFile !== undefined ? `backupFile="${settings.backupFile ? 1 : 0}"` : "",
+    settings.dateCompatibility !== undefined ? `dateCompatibility="${settings.dateCompatibility ? 1 : 0}"` : "",
   ].filter(Boolean);
 
   return attrs.length > 0 ? `<workbookPr ${attrs.join(" ")}/>` : "";
+}
+
+function renderCalculationProperties(settings?: ExcelWorkbookSettings) {
+  if (!settings) {
+    return "";
+  }
+  const attrs = [
+    settings.calcMode ? `calcMode="${escapeXml(settings.calcMode)}"` : "",
+    settings.iterate !== undefined ? `iterate="${settings.iterate ? 1 : 0}"` : "",
+    settings.iterateCount !== undefined ? `iterateCount="${settings.iterateCount}"` : "",
+    settings.iterateDelta !== undefined ? `iterateDelta="${settings.iterateDelta}"` : "",
+    settings.fullPrecision !== undefined ? `fullPrecision="${settings.fullPrecision ? 1 : 0}"` : "",
+    settings.fullCalcOnLoad !== undefined ? `fullCalcOnLoad="${settings.fullCalcOnLoad ? 1 : 0}"` : "",
+    settings.refMode ? `refMode="${escapeXml(settings.refMode)}"` : "",
+  ].filter(Boolean);
+
+  return attrs.length > 0 ? `<calcPr ${attrs.join(" ")}/>` : "";
+}
+
+function renderWorkbookProtection(settings?: ExcelWorkbookSettings) {
+  if (!settings) {
+    return "";
+  }
+  const attrs = [
+    settings.lockStructure !== undefined ? `lockStructure="${settings.lockStructure ? 1 : 0}"` : "",
+    settings.lockWindows !== undefined ? `lockWindows="${settings.lockWindows ? 1 : 0}"` : "",
+  ].filter(Boolean);
+
+  return attrs.length > 0 ? `<workbookProtection ${attrs.join(" ")}/>` : "";
 }
 
 function renderSheetXml(sheet: ExcelSheet) {
@@ -1098,18 +1144,12 @@ function parseSheetCells(xml: string, zip: Map<string, Buffer>) {
 
 function parseWorkbookSettings(xml: string): ExcelWorkbookSettings {
   const attrs = /<workbookPr\b([^>]*)\/?>/.exec(xml)?.[1];
-  if (!attrs) {
-    return {};
-  }
-  const date1904 = /date1904="([^"]+)"/.exec(attrs)?.[1];
-  const codeName = /codeName="([^"]+)"/.exec(attrs)?.[1];
-  const filterPrivacy = /filterPrivacy="([^"]+)"/.exec(attrs)?.[1];
-  const showObjects = /showObjects="([^"]+)"/.exec(attrs)?.[1];
+  const calcAttrs = /<calcPr\b([^>]*)\/?>/.exec(xml)?.[1];
+  const protectionAttrs = /<workbookProtection\b([^>]*)\/?>/.exec(xml)?.[1];
   return {
-    ...(date1904 !== undefined ? { date1904: date1904 === "1" || date1904.toLowerCase() === "true" } : {}),
-    ...(codeName ? { codeName: decodeXml(codeName) } : {}),
-    ...(filterPrivacy !== undefined ? { filterPrivacy: filterPrivacy === "1" || filterPrivacy.toLowerCase() === "true" } : {}),
-    ...(showObjects ? { showObjects: decodeXml(showObjects) } : {}),
+    ...parseWorkbookPropertyAttributes(attrs),
+    ...parseCalculationPropertyAttributes(calcAttrs),
+    ...parseWorkbookProtectionAttributes(protectionAttrs),
   };
 }
 
@@ -1202,10 +1242,105 @@ function mergeWorkbookSettings(
   if (props.showObjects !== undefined || props.showobjects !== undefined) {
     next.showObjects = (props.showObjects ?? props.showobjects)?.toLowerCase();
   }
+  if (props.backupFile !== undefined || props.backupfile !== undefined) {
+    next.backupFile = isTruthy(props.backupFile ?? props.backupfile ?? "false");
+  }
+  if (props.dateCompatibility !== undefined || props.datecompatibility !== undefined) {
+    next.dateCompatibility = isTruthy(props.dateCompatibility ?? props.datecompatibility ?? "false");
+  }
+  if (props["calc.mode"] !== undefined || props.calcmode !== undefined) {
+    next.calcMode = normalizeCalcMode(props["calc.mode"] ?? props.calcmode ?? "");
+  }
+  if (props["calc.iterate"] !== undefined || props.iterate !== undefined) {
+    next.iterate = isTruthy(props["calc.iterate"] ?? props.iterate ?? "false");
+  }
+  if (props["calc.iterateCount"] !== undefined || props.iteratecount !== undefined) {
+    next.iterateCount = Number(props["calc.iterateCount"] ?? props.iteratecount);
+  }
+  if (props["calc.iterateDelta"] !== undefined || props.iteratedelta !== undefined) {
+    next.iterateDelta = Number(props["calc.iterateDelta"] ?? props.iteratedelta);
+  }
+  if (props["calc.fullPrecision"] !== undefined || props.fullprecision !== undefined) {
+    next.fullPrecision = isTruthy(props["calc.fullPrecision"] ?? props.fullprecision ?? "false");
+  }
+  if (props["calc.fullCalcOnLoad"] !== undefined || props.fullcalconload !== undefined) {
+    next.fullCalcOnLoad = isTruthy(props["calc.fullCalcOnLoad"] ?? props.fullcalconload ?? "false");
+  }
+  if (props["calc.refMode"] !== undefined || props.refmode !== undefined) {
+    next.refMode = normalizeRefMode(props["calc.refMode"] ?? props.refmode ?? "");
+  }
+  if (props["workbook.lockStructure"] !== undefined || props.lockstructure !== undefined) {
+    next.lockStructure = isTruthy(props["workbook.lockStructure"] ?? props.lockstructure ?? "false");
+  }
+  if (props["workbook.lockWindows"] !== undefined || props.lockwindows !== undefined) {
+    next.lockWindows = isTruthy(props["workbook.lockWindows"] ?? props.lockwindows ?? "false");
+  }
 
   return next;
 }
 
 function isTruthy(value: string) {
   return /^(1|true|yes|on)$/i.test(value.trim());
+}
+
+function parseWorkbookPropertyAttributes(attrs?: string): ExcelWorkbookSettings {
+  if (!attrs) return {};
+  const date1904 = /date1904="([^"]+)"/.exec(attrs)?.[1];
+  const codeName = /codeName="([^"]+)"/.exec(attrs)?.[1];
+  const filterPrivacy = /filterPrivacy="([^"]+)"/.exec(attrs)?.[1];
+  const showObjects = /showObjects="([^"]+)"/.exec(attrs)?.[1];
+  const backupFile = /backupFile="([^"]+)"/.exec(attrs)?.[1];
+  const dateCompatibility = /dateCompatibility="([^"]+)"/.exec(attrs)?.[1];
+  return {
+    ...(date1904 !== undefined ? { date1904: isTruthy(date1904) } : {}),
+    ...(codeName ? { codeName: decodeXml(codeName) } : {}),
+    ...(filterPrivacy !== undefined ? { filterPrivacy: isTruthy(filterPrivacy) } : {}),
+    ...(showObjects ? { showObjects: decodeXml(showObjects) } : {}),
+    ...(backupFile !== undefined ? { backupFile: isTruthy(backupFile) } : {}),
+    ...(dateCompatibility !== undefined ? { dateCompatibility: isTruthy(dateCompatibility) } : {}),
+  };
+}
+
+function parseCalculationPropertyAttributes(attrs?: string): ExcelWorkbookSettings {
+  if (!attrs) return {};
+  const calcMode = /calcMode="([^"]+)"/.exec(attrs)?.[1];
+  const iterate = /iterate="([^"]+)"/.exec(attrs)?.[1];
+  const iterateCount = /iterateCount="([^"]+)"/.exec(attrs)?.[1];
+  const iterateDelta = /iterateDelta="([^"]+)"/.exec(attrs)?.[1];
+  const fullPrecision = /fullPrecision="([^"]+)"/.exec(attrs)?.[1];
+  const fullCalcOnLoad = /fullCalcOnLoad="([^"]+)"/.exec(attrs)?.[1];
+  const refMode = /refMode="([^"]+)"/.exec(attrs)?.[1];
+  return {
+    ...(calcMode ? { calcMode: decodeXml(calcMode) } : {}),
+    ...(iterate !== undefined ? { iterate: isTruthy(iterate) } : {}),
+    ...(iterateCount !== undefined ? { iterateCount: Number(iterateCount) } : {}),
+    ...(iterateDelta !== undefined ? { iterateDelta: Number(iterateDelta) } : {}),
+    ...(fullPrecision !== undefined ? { fullPrecision: isTruthy(fullPrecision) } : {}),
+    ...(fullCalcOnLoad !== undefined ? { fullCalcOnLoad: isTruthy(fullCalcOnLoad) } : {}),
+    ...(refMode ? { refMode: decodeXml(refMode) } : {}),
+  };
+}
+
+function parseWorkbookProtectionAttributes(attrs?: string): ExcelWorkbookSettings {
+  if (!attrs) return {};
+  const lockStructure = /lockStructure="([^"]+)"/.exec(attrs)?.[1];
+  const lockWindows = /lockWindows="([^"]+)"/.exec(attrs)?.[1];
+  return {
+    ...(lockStructure !== undefined ? { lockStructure: isTruthy(lockStructure) } : {}),
+    ...(lockWindows !== undefined ? { lockWindows: isTruthy(lockWindows) } : {}),
+  };
+}
+
+function normalizeCalcMode(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "automatic") return "auto";
+  if (normalized === "autoexcepttables" || normalized === "autonoexcepttables" || normalized === "autonotable") {
+    return "autoNoTable";
+  }
+  return normalized;
+}
+
+function normalizeRefMode(value: string) {
+  const normalized = value.trim().toUpperCase();
+  return normalized === "R1C1" ? "R1C1" : "A1";
 }

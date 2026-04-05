@@ -249,6 +249,8 @@ describe("officekit CLI scaffold", () => {
       "filterPrivacy=true",
       "--prop",
       "showObjects=all",
+      "--prop",
+      "calc.mode=autoNoTable",
     ]);
 
     const workbook = await runCli(["get", filePath, "/workbook", "--json"]);
@@ -258,10 +260,45 @@ describe("officekit CLI scaffold", () => {
     expect(workbook.stdout).toContain('"codeName": "OfficekitBook"');
     expect(workbook.stdout).toContain('"filterPrivacy": true');
     expect(workbook.stdout).toContain('"showObjects": "all"');
+    expect(workbook.stdout).toContain('"calcMode": "autoNoTable"');
     expect(workbookXml).toContain('date1904="1"');
     expect(workbookXml).toContain('codeName="OfficekitBook"');
     expect(workbookXml).toContain('filterPrivacy="1"');
     expect(workbookXml).toContain('showObjects="all"');
+    expect(workbookXml).toContain('calcMode="autoNoTable"');
+  });
+
+  test("preserves extended workbook settings from metadata-free Excel OOXML files", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-settings-extended-fallback-"));
+    const filePath = path.join(dir, "settings-extended-fallback.xlsx");
+    await writeFile(filePath, buildExternalExcelExtendedSettingsZip());
+
+    const workbook = await runCli(["get", filePath, "/workbook", "--json"]);
+    await runCli([
+      "set",
+      filePath,
+      "/workbook",
+      "--prop",
+      "calc.iterate=true",
+      "--prop",
+      "calc.iterateCount=77",
+      "--prop",
+      "workbook.lockStructure=true",
+    ]);
+    const zip = readStoredZip(await readFile(filePath));
+    const workbookXml = zip.get("xl/workbook.xml")!.toString("utf8");
+
+    expect(workbook.stdout).toContain('"backupFile": true');
+    expect(workbook.stdout).toContain('"dateCompatibility": true');
+    expect(workbook.stdout).toContain('"calcMode": "autoNoTable"');
+    expect(workbook.stdout).toContain('"iterateCount": 5');
+    expect(workbook.stdout).toContain('"refMode": "R1C1"');
+    expect(workbook.stdout).toContain('"lockStructure": true');
+    expect(workbookXml).toContain('backupFile="1"');
+    expect(workbookXml).toContain('dateCompatibility="1"');
+    expect(workbookXml).toContain('calcMode="autoNoTable"');
+    expect(workbookXml).toContain('iterateCount="77"');
+    expect(workbookXml).toContain('lockStructure="1"');
   });
 
   test("reads and mutates a metadata-free standard PowerPoint OOXML file", async () => {
@@ -590,6 +627,52 @@ function buildExternalExcelSettingsZip() {
       data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData><row r="1"><c r="A1" s="1" t="inlineStr"><is><t>Styled</t></is></c></row></sheetData>
+</worksheet>`),
+    },
+  ]);
+}
+
+function buildExternalExcelExtendedSettingsZip() {
+  return createStoredZip([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`),
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/workbook.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <workbookPr backupFile="1" dateCompatibility="1" codeName="WorkbookCode"/>
+  <workbookProtection lockStructure="1" lockWindows="1"/>
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+  <calcPr calcMode="autoNoTable" iterate="1" iterateCount="5" iterateDelta="0.001" fullPrecision="1" fullCalcOnLoad="1" refMode="R1C1"/>
+</workbook>`),
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData></sheetData>
 </worksheet>`),
     },
   ]);
