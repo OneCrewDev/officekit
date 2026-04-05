@@ -230,7 +230,7 @@ describe("officekit CLI scaffold", () => {
     expect(workbookXml).toContain('date1904="1"');
     expect(workbookXml).toContain('codeName="WorkbookCode"');
     expect(sheetXml).toContain(' s="1"');
-    expect(stylesXml).toContain("<cellXfs");
+    expect(stylesXml).toContain("cellXfs");
   });
 
   test("sets workbook settings on officekit-created workbooks", async () => {
@@ -344,10 +344,48 @@ describe("officekit CLI scaffold", () => {
     expect(workbookXml).toContain('calcMode="autoNoTable"');
     expect(workbookXml).toContain('iterateCount="77"');
     expect(workbookXml).toContain('lockStructure="1"');
-    expect(stylesXml).toContain("<cellXfs");
+    expect(stylesXml).toContain("cellXfs");
     expect(sheetXml).toContain(' s="1"');
     expect(sheetXml).toContain("<f>SUM(A1:A1)</f>");
     expect(sheetXml).toContain("<v>34</v>");
+  });
+
+  test("mutates a real harvested OfficeCLI styled workbook without dropping style ids", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-real-style-fixture-"));
+    const fixturePath = path.resolve(
+      import.meta.dir,
+      "../../../fixtures/officecli-source/examples/excel/outputs/beautiful_charts.xlsx",
+    );
+    const filePath = path.join(dir, "beautiful_charts.xlsx");
+    await writeFile(filePath, await readFile(fixturePath));
+
+    const before = await runCli(["get", filePath, "/Sheet1/B2", "--json"]);
+    await runCli([
+      "set",
+      filePath,
+      "/Sheet1/G2",
+      "--prop",
+      "formula==SUM(B2:E2)",
+      "--prop",
+      "value=303",
+      "--prop",
+      "styleId=10",
+    ]);
+    const after = await runCli(["get", filePath, "/Sheet1/G2", "--json"]);
+    const zip = readStoredZip(await readFile(filePath));
+    const stylesXml = zip.get("xl/styles.xml")!.toString("utf8");
+    const sheetXml = zip.get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(before.stdout).toContain('"styleId": "8"');
+    expect(before.stdout).toContain('"value": "120"');
+    expect(after.stdout).toContain('"styleId": "10"');
+    expect(after.stdout).toContain('"formula": "SUM(B2:E2)"');
+    expect(after.stdout).toContain('"value": "303"');
+    expect(stylesXml).toContain("cellXfs");
+    expect(sheetXml).toContain('r="G2"');
+    expect(sheetXml).toContain(' s="10"');
+    expect(sheetXml).toContain("<f>SUM(B2:E2)</f>");
+    expect(sheetXml).toContain("<v>303</v>");
   });
 
   test("reads and mutates a metadata-free standard PowerPoint OOXML file", async () => {
