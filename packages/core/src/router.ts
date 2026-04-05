@@ -51,7 +51,7 @@ const formatToPackage: Record<SupportedFormat, Extract<PackageLane, "packages/wo
 export function parseCliInput(argv: string[]): ParsedCliInput {
   const flags = new Set(argv.filter((token) => token.startsWith("--")));
   return {
-    argv: argv.filter((token) => token !== "--json" && token !== "--plan" && token !== "--help" && token !== "--version"),
+    argv: argv.filter((token) => token !== "--plan" && token !== "--help" && token !== "--version"),
     json: flags.has("--json"),
     plan: flags.has("--plan"),
     help: flags.has("--help"),

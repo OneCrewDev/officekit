@@ -1,5 +1,7 @@
 import {
   buildExecutionPlan,
+  type CommandResult,
+  executeCommand,
   normalizeError,
   parseCliInput,
   renderHelpText,
@@ -9,7 +11,7 @@ import {
 
 const VERSION = "0.1.0";
 
-export function runCli(rawArgv: string[]) {
+export async function runCli(rawArgv: string[]): Promise<CommandResult> {
   const input = parseCliInput(rawArgv);
   const [command] = input.argv;
 
@@ -36,19 +38,77 @@ export function runCli(rawArgv: string[]) {
   }
 
   try {
-    const plan = buildExecutionPlan(input.argv);
-    if (input.plan || input.json) {
+    if (input.plan) {
+      const plan = buildExecutionPlan(input.argv);
       return {
         exitCode: 0,
         stdout: renderPlanResult(plan, input.json),
       };
     }
 
-    return {
-      exitCode: 2,
-      stdout: renderPlanResult(plan, false),
-      stderr: "Scaffold-only command contract: rerun with --plan or wait for the owning package implementation.",
-    };
+    if (command === "install") {
+      // @ts-expect-error workspace JS runtime module
+      const install = await import("../../install/src/index.js");
+      const plan = install.buildInstallPlan();
+      return {
+        exitCode: 0,
+        stdout: input.json ? JSON.stringify(plan, null, 2) : [`asset: ${plan.assetName}`, `install dir: ${plan.installDir}`, `path: ${plan.pathInstruction}`].join("\n"),
+      };
+    }
+
+    if (command === "skills") {
+      // @ts-expect-error workspace JS runtime module
+      const skills = await import("../../skills/src/index.js");
+      const subcommand = input.argv[1] ?? "list";
+      if (subcommand === "list") {
+        const bundles = skills.listSkillBundles();
+        return {
+          exitCode: 0,
+          stdout: input.json ? JSON.stringify(bundles, null, 2) : bundles.map((bundle: { name: string; description: string }) => `${bundle.name}: ${bundle.description}`).join("\n"),
+        };
+      }
+
+      if (subcommand === "install") {
+        const bundleNames = input.argv.slice(2);
+        const installed = await skills.installSkillBundles({ bundleNames: bundleNames.length > 0 ? bundleNames : ["officekit"] });
+        return {
+          exitCode: 0,
+          stdout: input.json ? JSON.stringify(installed, null, 2) : installed.map((item: { agent: string; bundle: string }) => `${item.agent}: installed ${item.bundle}`).join("\n"),
+        };
+      }
+    }
+
+    if (command === "config") {
+      // @ts-expect-error workspace JS runtime module
+      const install = await import("../../install/src/index.js");
+      const action = input.argv[1] ?? "list";
+      if (action === "list") {
+        const config = await install.readConfig();
+        return { exitCode: 0, stdout: JSON.stringify(config, null, 2) };
+      }
+      if (action === "set") {
+        const [key, value] = input.argv.slice(2);
+        if (!key) {
+          return { exitCode: 1, stderr: "config set requires <key> <value>" };
+        }
+        const current = await install.readConfig();
+        const nextValue: unknown =
+          value === "true" ? true : value === "false" ? false : value ?? null;
+        await install.writeConfig({ ...current, [key]: nextValue });
+        return { exitCode: 0, stdout: JSON.stringify({ ok: true, key, value: nextValue }, null, 2) };
+      }
+    }
+
+    if (command === "help" && input.argv[1]) {
+      // @ts-expect-error workspace JS runtime module
+      const docs = await import("../../docs/src/index.js");
+      const content = await docs.resolveCommandDoc(input.argv[1]).catch(() => null);
+      if (content) {
+        return { exitCode: 0, stdout: content };
+      }
+    }
+
+    return await executeCommand(input.argv);
   } catch (error) {
     const normalized = normalizeError(error);
     const body = input.json

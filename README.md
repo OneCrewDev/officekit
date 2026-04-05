@@ -6,7 +6,7 @@
 
 ## Lineage
 
-This repository is **migrated from OfficeCLI**. The goal is parity in document capability and operator detail, not command-line compatibility. The Node/Bun version is free to adopt a cleaner package layout and command surface as long as the OfficeCLI feature families remain covered and verifiable.
+This version is migrated from OfficeCLI. This repository is **migrated from OfficeCLI**. The goal is parity in document capability and operator detail, not command-line compatibility. The Node/Bun version is free to adopt a cleaner package layout and command surface as long as the OfficeCLI feature families remain covered and verifiable.
 
 ## Migration principles
 
@@ -24,6 +24,7 @@ This repository is **migrated from OfficeCLI**. The goal is parity in document c
 
 ## Scope notes
 
+- Command compatibility with `officecli` is **not** a goal.
 - **Command compatibility is not required.**
 - **MCP is excluded for v1.**
 - **README lineage must stay explicit** so users understand this codebase is the OfficeCLI migration.

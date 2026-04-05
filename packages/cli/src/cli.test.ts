@@ -1,22 +1,513 @@
 import { describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { deflateRawSync } from "node:zlib";
+import { createStoredZip, readStoredZip } from "@officekit/core";
 import { runCli } from "./index.js";
 
 describe("officekit CLI scaffold", () => {
-  test("returns a JSON execution plan for Word create", () => {
-    const result = runCli(["create", "demo.docx", "--plan", "--json"]);
+  test("returns a JSON execution plan for Word create", async () => {
+    const result = await runCli(["create", "demo.docx", "--plan", "--json"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('"targetPackage": "packages/word"');
   });
 
-  test("returns lineage summary for about", () => {
-    const result = runCli(["about"]);
+  test("returns lineage summary for about", async () => {
+    const result = await runCli(["about"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("migration of OfficeCLI");
   });
 
-  test("keeps unsupported MCP explicit", () => {
-    const result = runCli(["mcp", "--json"]);
+  test("keeps unsupported MCP explicit", async () => {
+    const result = await runCli(["mcp", "--json"]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("capability_excluded");
   });
+
+  test("creates and mutates a Word document vertical slice", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-word-"));
+    const filePath = path.join(dir, "demo.docx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/body", "--type", "paragraph", "--prop", "text=Hello vertical slice"]);
+    const result = await runCli(["get", filePath, "/body/p[1]", "--json"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Hello vertical slice");
+    const rawBytes = await readFile(filePath);
+    expect(rawBytes.length).toBeGreaterThan(50);
+  });
+
+  test("creates and mutates a Word table vertical slice", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-word-table-"));
+    const filePath = path.join(dir, "table.docx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/body", "--type", "table", "--prop", "rows=2", "--prop", "cols=2"]);
+    await runCli(["set", filePath, "/body/table[1]/cell[1,1]", "--prop", "text=Cell 11"]);
+    await runCli(["set", filePath, "/body/table[1]/cell[2,2]", "--prop", "text=Cell 22"]);
+
+    const table = await runCli(["get", filePath, "/body/table[1]", "--json"]);
+    const outline = await runCli(["view", filePath, "outline"]);
+    const html = await runCli(["view", filePath, "html"]);
+
+    expect(table.stdout).toContain("Cell 11");
+    expect(outline.stdout).toContain("Table 1: 2x2");
+    expect(outline.stdout).toContain("R2C2: Cell 22");
+    expect(html.stdout).toContain("<table>");
+    expect(html.stdout).toContain("Cell 11");
+  });
+
+  test("creates and mutates an Excel document vertical slice", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-"));
+    const filePath = path.join(dir, "demo.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "cell", "--prop", "ref=A1", "--prop", "value=42"]);
+    const result = await runCli(["get", filePath, "/Sheet1/A1", "--json"]);
+    expect(result.stdout).toContain("\"42\"");
+  });
+
+  test("creates and mutates a PowerPoint document vertical slice", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-ppt-"));
+    const filePath = path.join(dir, "demo.pptx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/", "--type", "slide", "--prop", "title=Roadmap"]);
+    await runCli(["add", filePath, "/slide[1]", "--type", "shape", "--prop", "text=Q4 launch"]);
+    const result = await runCli(["view", filePath, "outline"]);
+    expect(result.stdout).toContain("Slide 1: Roadmap");
+    expect(result.stdout).toContain("Shape 1: Q4 launch");
+  });
+
+  test("reads a metadata-free standard Word OOXML file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-word-fallback-"));
+    const filePath = path.join(dir, "fallback.docx");
+    await writeFile(filePath, buildExternalWordZip("Imported paragraph"));
+
+    const getResult = await runCli(["get", filePath, "/body/p[1]", "--json"]);
+    const viewResult = await runCli(["view", filePath, "outline"]);
+    const rawResult = await runCli(["raw", filePath]);
+
+    expect(getResult.stdout).toContain("Imported paragraph");
+    expect(viewResult.stdout).toContain("Paragraph 1: Imported paragraph");
+    expect(rawResult.stdout).toContain('"format": "word"');
+  });
+
+  test("reads and mutates a metadata-free standard Word table OOXML file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-word-table-fallback-"));
+    const filePath = path.join(dir, "fallback-table.docx");
+    await writeFile(filePath, buildExternalWordTableZip("A", "B"));
+
+    const before = await runCli(["view", filePath, "outline"]);
+    expect(before.stdout).toContain("Table 1: 1x2");
+    expect(before.stdout).toContain("R1C1: A");
+
+    await runCli(["set", filePath, "/body/table[1]/cell[1,2]", "--prop", "text=Updated"]);
+    const after = await runCli(["get", filePath, "/body/table[1]/cell[1,2]", "--json"]);
+    expect(after.stdout).toContain("Updated");
+  });
+
+  test("reads and mutates a metadata-free standard Excel OOXML file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-fallback-"));
+    const filePath = path.join(dir, "fallback.xlsx");
+    await writeFile(filePath, buildExternalExcelZip("A1", "99"));
+
+    const before = await runCli(["get", filePath, "/Sheet1/A1", "--json"]);
+    expect(before.stdout).toContain('"99"');
+
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=100"]);
+    const after = await runCli(["get", filePath, "/Sheet1/A1", "--json"]);
+    expect(after.stdout).toContain('"100"');
+
+    const zipEntries = readStoredZip(await readFile(filePath));
+    expect(zipEntries.has("officekit/document.json")).toBe(true);
+  });
+
+  test("reads and mutates a metadata-free standard PowerPoint OOXML file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-ppt-fallback-"));
+    const filePath = path.join(dir, "fallback.pptx");
+    await writeFile(filePath, buildExternalPptZip("Imported title", "Imported shape"));
+
+    const before = await runCli(["view", filePath, "outline"]);
+    expect(before.stdout).toContain("Slide 1: Imported title");
+    expect(before.stdout).toContain("Shape 1: Imported shape");
+
+    await runCli(["add", filePath, "/slide[1]", "--type", "shape", "--prop", "text=New shape"]);
+    const after = await runCli(["view", filePath, "outline"]);
+    expect(after.stdout).toContain("Shape 2: New shape");
+  });
+
+  test("falls back to OOXML parsing when officekit metadata is stripped", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-strip-meta-"));
+    const filePath = path.join(dir, "demo.docx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/body", "--type", "paragraph", "--prop", "text=No metadata needed"]);
+
+    const zipEntries = readStoredZip(await readFile(filePath));
+    zipEntries.delete("officekit/document.json");
+    await writeFile(filePath, createStoredZip([...zipEntries.entries()].map(([name, data]) => ({ name, data }))));
+
+    const result = await runCli(["get", filePath, "/body/p[1]", "--json"]);
+    expect(result.stdout).toContain("No metadata needed");
+  });
+
+  test("parses a real OfficeCLI PowerPoint fixture without officekit metadata", async () => {
+    const fixturePath = path.resolve(import.meta.dir, "../../../fixtures/officecli-source/examples/Alien_Guide.pptx");
+    const result = await runCli(["view", fixturePath, "outline"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Slide 1:");
+    expect(result.stdout).toContain("外星人地球");
+    expect(result.stdout).toContain("Shape 1:");
+  });
+
+  test("reads a deflated metadata-free OOXML workbook with shared strings", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-xlsx-deflated-"));
+    const filePath = path.join(dir, "shared.xlsx");
+    await writeFile(filePath, buildDeflatedExternalExcelZip());
+
+    const result = await runCli(["get", filePath, "/Sheet1/A1", "--json"]);
+    const outline = await runCli(["view", filePath, "outline"]);
+
+    expect(result.stdout).toContain('"Shared hello"');
+    expect(outline.stdout).toContain("Sheet Sheet1");
+    expect(outline.stdout).toContain("A1: Shared hello");
+  });
+
+  test("watch keeps a preview server alive until interrupted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-watch-"));
+    const filePath = path.join(dir, "watch.docx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/body", "--type", "paragraph", "--prop", "text=Watching"]);
+
+    const child = spawn(process.execPath, ["run", "packages/cli/bin/officekit", "watch", filePath, "--port", "0"], {
+      cwd: path.resolve(import.meta.dir, "../../.."),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stdout = await waitForOutput(child.stdout, /"url":\s*"([^"]+)"/);
+    const urlMatch = stdout.match(/"url":\s*"([^"]+)"/);
+    expect(urlMatch).not.toBeNull();
+    const url = urlMatch![1];
+
+    const health = (await fetch(`${url}/health`).then((response) => response.json())) as { ok: boolean; version: number; clients: number };
+    const html = await fetch(url).then((response) => response.text());
+
+    expect(health.ok).toBe(true);
+    expect(html).toContain("Watching");
+
+    child.kill("SIGINT");
+    const exitCode = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+    expect(exitCode).toBe(0);
+  });
 });
+
+function buildExternalWordZip(text: string) {
+  return createStoredZip([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`),
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "word/document.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>${text}</w:t></w:r></w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>`),
+    },
+  ]);
+}
+
+function buildExternalWordTableZip(left: string, right: string) {
+  return createStoredZip([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`),
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "word/document.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>${left}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>${right}</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:sectPr/>
+  </w:body>
+</w:document>`),
+    },
+  ]);
+}
+
+function buildExternalExcelZip(ref: string, value: string) {
+  return createStoredZip([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`),
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/workbook.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`),
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData><row r="1"><c r="${ref}" t="inlineStr"><is><t>${value}</t></is></c></row></sheetData>
+</worksheet>`),
+    },
+  ]);
+}
+
+function buildExternalPptZip(title: string, shape: string) {
+  return createStoredZip([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>`),
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "ppt/presentation.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>`),
+    },
+    {
+      name: "ppt/_rels/presentation.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "ppt/slides/slide1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:sp><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>${title}</a:t></a:r></a:p></p:txBody></p:sp>
+      <p:sp><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>${shape}</a:t></a:r></a:p></p:txBody></p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>`),
+    },
+  ]);
+}
+
+function buildDeflatedExternalExcelZip() {
+  return createZipWithCompression([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`),
+      compression: 8,
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`),
+      compression: 8,
+    },
+    {
+      name: "xl/workbook.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`),
+      compression: 8,
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+</Relationships>`),
+      compression: 8,
+    },
+    {
+      name: "xl/sharedStrings.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="1" uniqueCount="1">
+  <si><t>Shared hello</t></si>
+</sst>`),
+      compression: 8,
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData>
+</worksheet>`),
+      compression: 8,
+    },
+  ]);
+}
+
+function createZipWithCompression(entries: Array<{ name: string; data: Buffer; compression?: 0 | 8 }>) {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const compression = entry.compression ?? 0;
+    const body = compression === 8 ? deflateRawSync(entry.data) : entry.data;
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(compression, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt32LE(0, 14);
+    localHeader.writeUInt32LE(body.length, 18);
+    localHeader.writeUInt32LE(entry.data.length, 22);
+    localHeader.writeUInt16LE(name.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    localParts.push(localHeader, name, body);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(compression, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0, 14);
+    centralHeader.writeUInt32LE(0, 16);
+    centralHeader.writeUInt32LE(body.length, 20);
+    centralHeader.writeUInt32LE(entry.data.length, 24);
+    centralHeader.writeUInt16LE(name.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+    centralParts.push(centralHeader, name);
+
+    offset += localHeader.length + name.length + body.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+async function waitForOutput(stream: NodeJS.ReadableStream | null, pattern: RegExp) {
+  if (!stream) {
+    throw new Error("Missing child stdout stream.");
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    let collected = "";
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for output matching ${pattern}`));
+    }, 5_000);
+
+    const onData = (chunk: Buffer | string) => {
+      collected += chunk.toString();
+      if (pattern.test(collected)) {
+        cleanup();
+        resolve(collected);
+      }
+    };
+
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      stream.off("data", onData);
+      stream.off("error", onError);
+    };
+
+    stream.on("data", onData);
+    stream.on("error", onError);
+  });
+}
