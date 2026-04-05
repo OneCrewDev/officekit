@@ -141,8 +141,44 @@ export async function addDocumentNode(filePath: string, targetPath: string, opti
       );
     }
     case "excel": {
+      if (options.type === "sheet") {
+        if (targetPath !== "/" && targetPath !== "/workbook") {
+          throw new UsageError(
+            "Excel add sheet currently supports only the workbook root.",
+            "Use: officekit add book.xlsx / --type sheet --prop name=Sheet2",
+          );
+        }
+        const requestedName = options.props.name ?? `Sheet${document.excel!.sheets.length + 1}`;
+        if (document.excel!.sheets.some((sheet) => sheet.name.toLowerCase() === requestedName.toLowerCase())) {
+          throw new OfficekitError(`Sheet '${requestedName}' already exists.`, "duplicate_sheet");
+        }
+        document.excel!.sheets.push({ name: requestedName, cells: {} });
+        break;
+      }
+      if (options.type === "row") {
+        const sheetName = targetPath.replace(/^\//, "") || "Sheet1";
+        const sheet = ensureSheet(document, sheetName);
+        const rowIndex = Math.max(
+          1,
+          Number(
+            options.props.index
+              ?? nextAvailableRowIndex(sheet),
+          ),
+        );
+        const cols = Math.max(1, Number(options.props.cols ?? "1"));
+        for (let columnOffset = 0; columnOffset < cols; columnOffset += 1) {
+          const ref = `${indexToColumnName(columnOffset + 1)}${rowIndex}`;
+          if (!sheet.cells[ref]) {
+            sheet.cells[ref] = { value: "" };
+          }
+        }
+        break;
+      }
       if (options.type !== "cell") {
-        throw new UsageError("Excel add currently supports only: add <file.xlsx> /Sheet1 --type cell --prop ref=A1 --prop value=...", "Use --type cell with a sheet path.");
+        throw new UsageError(
+          "Excel add currently supports: sheet, row, or cell.",
+          "Use / with --type sheet, /Sheet1 with --type row, or /Sheet1 with --type cell.",
+        );
       }
       const sheetName = targetPath.replace(/^\//, "") || options.props.sheet || "Sheet1";
       const sheet = ensureSheet(document, sheetName);
@@ -590,6 +626,16 @@ function ensureSheet(document: OfficekitDocument, name: string) {
   const sheet: ExcelSheet = { name, cells: {} };
   document.excel!.sheets.push(sheet);
   return sheet;
+}
+
+function nextAvailableRowIndex(sheet: ExcelSheet) {
+  const refs = Object.keys(sheet.cells);
+  if (refs.length === 0) return 1;
+  return (
+    Math.max(
+      ...refs.map((ref) => Number(/\d+/.exec(ref)?.[0] ?? "0")),
+    ) + 1
+  );
 }
 
 function resolveExcelPath(document: OfficekitDocument, targetPath: string) {

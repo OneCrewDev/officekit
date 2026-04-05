@@ -91,6 +91,22 @@ describe("officekit CLI scaffold", () => {
     expect(result.stdout).toContain("\"42\"");
   });
 
+  test("adds Excel sheets and rows", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-sheet-row-"));
+    const filePath = path.join(dir, "sheets.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/", "--type", "sheet", "--prop", "name=Analysis"]);
+    await runCli(["add", filePath, "/Analysis", "--type", "row", "--prop", "index=3", "--prop", "cols=2"]);
+
+    const workbook = await runCli(["get", filePath, "/workbook", "--json"]);
+    const rowCell = await runCli(["get", filePath, "/Analysis/B3", "--json"]);
+    const outline = await runCli(["view", filePath, "outline"]);
+
+    expect(workbook.stdout).toContain('"name": "Analysis"');
+    expect(rowCell.stdout).toContain('"ref": "B3"');
+    expect(outline.stdout).toContain("Sheet Analysis");
+  });
+
   test("preserves authored Excel formulas in created workbooks", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-formula-"));
     const filePath = path.join(dir, "formula.xlsx");
