@@ -3670,12 +3670,16 @@ function evaluateFormulaExpression(
     SWITCH: (args) => evaluateSwitchFormula(state, args, sheet, visited),
     ROMAN: (args) => { const num = Math.round(firstNumericFormulaArg(state, args, sheet, visited) ?? 0); if (num < 0 || num > 3999) return undefined; const thousands = ['','M','MM','MMM']; const hundreds = ['','C','CC','CCC','CD','D','DC','DCC','DCCC','CM']; const tens = ['','X','XX','XXX','XL','L','LX','LXX','LXXX','XC']; const ones = ['','I','II','III','IV','V','VI','VII','VIII','IX']; return thousands[Math.floor(num/1000)] + hundreds[Math.floor((num%1000)/100)] + tens[Math.floor((num%100)/10)] + ones[num%10]; },
     ARABIC: (args) => { const s = splitFormulaArgs(args)[0]?.replace(/"/g, "") ?? ""; const vals = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}; let result = 0; let prev = 0; for (let i = s.length - 1; i >= 0; i--) { const v = vals[s[i].toUpperCase()] || 0; result += v >= prev ? v : -v; prev = v; } return result; },
+    INDIRECT: () => undefined,
+    OFFSET: () => undefined,
+    RATE: () => undefined,
+    IRR: () => undefined,
   };
 
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|XNOR|XOR|MEDIAN|MODE|LARGE|SMALL|GEOMEAN|HARMEAN|PERCENTRANK|PERCENTRANK_INC|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISERR|ISEVEN|ISODD|ISLOGICAL|ISNONTEXT|TYPE|NA|ERROR_TYPE|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|SLN|SYD|DB|DDB|STDEV|STDEVP|VAR|VARP|STDEV_S|STDEV_P|VAR_S|VAR_P|RANK|PERCENTILE|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE|SIN|COS|TAN|ASIN|ACOS|ACOSH|ATAN|ATAN2|ASINH|ATANH|SINH|COSH|TANH|DEGREES|RADIANS|FACT|COMBIN|PERMUT|GCD|LCM|EVEN|ODD|MROUND|CEILING|FLOOR|CEILING_MATH|FLOOR_MATH|DECIMAL|MODE_SNGL|RANK_EQ|PERCENTILE_INC|BIN2DEC|HEX2DEC|OCT2DEC|SWITCH|ROMAN|ARABIC)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|XNOR|XOR|MEDIAN|MODE|LARGE|SMALL|GEOMEAN|HARMEAN|PERCENTRANK|PERCENTRANK_INC|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISERR|ISEVEN|ISODD|ISLOGICAL|ISNONTEXT|TYPE|NA|ERROR_TYPE|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|SLN|SYD|DB|DDB|STDEV|STDEVP|VAR|VARP|STDEV_S|STDEV_P|VAR_S|VAR_P|RANK|PERCENTILE|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE|SIN|COS|TAN|ASIN|ACOS|ACOSH|ATAN|ATAN2|ASINH|ATANH|SINH|COSH|TANH|DEGREES|RADIANS|FACT|COMBIN|PERMUT|GCD|LCM|EVEN|ODD|MROUND|CEILING|FLOOR|CEILING_MATH|FLOOR_MATH|DECIMAL|MODE_SNGL|RANK_EQ|PERCENTILE_INC|BIN2DEC|HEX2DEC|OCT2DEC|SWITCH|ROMAN|ARABIC|INDIRECT|OFFSET|RATE|IRR)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -3946,6 +3950,15 @@ function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, ex
   if (fn === "T") {
     const val = evaluateTextFormulaArg(state, args[0] ?? "", sheet);
     return typeof val === 'string' && val !== "" ? val : "";
+  }
+  if (fn === "BASE") {
+    const num = Math.round(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0);
+    const base = Math.round(firstNumericFormulaArg(state, args[1] ?? "10", sheet, new Set()) ?? 10);
+    const minLen = args[2] !== undefined ? Math.round(firstNumericFormulaArg(state, args[2], sheet, new Set()) ?? 0) : 0;
+    if (base < 2 || base > 36) return undefined;
+    let s = num.toString(base).toUpperCase();
+    if (minLen > 0) s = s.padStart(minLen, '0');
+    return s;
   }
   if (fn === "N") {
     const val = firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set());
@@ -4756,7 +4769,7 @@ function evaluateTextJoinFormula(state: ExcelWorkbookState | undefined, formula:
 }
 
 function evaluateDateFormulaForDisplay(state: ExcelWorkbookState | undefined, formula: string, sheet: ExcelSheetModel) {
-  const dateMatch = /^(TODAY|NOW|DATE|YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|DATEVALUE|TIMEVALUE|EDATE|EOMONTH|DATEDIF|DAYS|NETWORKDAYS|WORKDAY|WEEKDAY|YEARFRAC|ISOWEEKNUM)\((.*)\)$/i.exec(formula);
+  const dateMatch = /^(TODAY|NOW|DATE|YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|DATEVALUE|TIMEVALUE|EDATE|EOMONTH|DATEDIF|DAYS|NETWORKDAYS|WORKDAY|WEEKDAY|YEARFRAC|ISOWEEKNUM|NETWORKDAYS_INTL|WORKDAY_INTL)\((.*)\)$/i.exec(formula);
   if (!dateMatch) return undefined;
   const fn = dateMatch[1].toUpperCase();
   const args = splitFormulaArgs(dateMatch[2]);
@@ -4850,6 +4863,74 @@ function evaluateDateFormulaForDisplay(state: ExcelWorkbookState | undefined, fo
       date.setDate(date.getDate() + 1);
       const dayOfWeek = date.getDay();
       if (dayOfWeek !== 0 && dayOfWeek !== 6) remaining--;
+    }
+    return String((date.getTime() / 86400000) + 25569);
+  }
+  if (fn === "NETWORKDAYS_INTL") {
+    const serial1 = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const serial2 = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? NaN);
+    const weekendRaw = args[2] !== undefined ? String(firstNumericFormulaArg(state, args[2], sheet, new Set()) ?? "1") : "1";
+    if (!Number.isFinite(serial1) || !Number.isFinite(serial2)) return undefined;
+    const d1 = new Date(Math.round((serial1 - 25569) * 86400000));
+    const d2 = new Date(Math.round((serial2 - 25569) * 86400000));
+    // Parse weekend: number 1-7 means specific days, string of 7 chars means Mon-Sun flags
+    const isWeekendDay = (d: Date) => {
+      const dow = d.getDay(); // 0=Sun, 1=Mon... 6=Sat
+      if (/^\d$/.test(weekendRaw)) {
+        const w = parseInt(weekendRaw, 10);
+        if (w === 1) return dow === 1; // Mon
+        if (w === 2) return dow === 2; // Tue
+        if (w === 3) return dow === 3;
+        if (w === 4) return dow === 4;
+        if (w === 5) return dow === 5;
+        if (w === 6) return dow === 6;
+        if (w === 7) return dow === 0;
+        return dow === 0 || dow === 6; // default
+      }
+      if (weekendRaw.length === 7) {
+        // "0000011" = Sat and Sun are weekend (default Mon-Sun mapping)
+        const map = [0, 1, 2, 3, 4, 5, 6]; // Sun, Mon, Tue, Wed, Thu, Fri, Sat
+        return weekendRaw[map[dow]] === '1';
+      }
+      return dow === 0 || dow === 6;
+    };
+    let count = 0;
+    const current = new Date(d1);
+    while (current <= d2) {
+      if (!isWeekendDay(current)) count++;
+      current.setDate(current.getDate() + 1);
+    }
+    return String(count);
+  }
+  if (fn === "WORKDAY_INTL") {
+    const serial = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const days = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? 0);
+    const weekendRaw = args[2] !== undefined ? String(firstNumericFormulaArg(state, args[2], sheet, new Set()) ?? "1") : "1";
+    if (!Number.isFinite(serial)) return undefined;
+    const date = new Date(Math.round((serial - 25569) * 86400000));
+    const isWeekendDay = (d: Date) => {
+      const dow = d.getDay();
+      if (/^\d$/.test(weekendRaw)) {
+        const w = parseInt(weekendRaw, 10);
+        if (w === 1) return dow === 1;
+        if (w === 2) return dow === 2;
+        if (w === 3) return dow === 3;
+        if (w === 4) return dow === 4;
+        if (w === 5) return dow === 5;
+        if (w === 6) return dow === 6;
+        if (w === 7) return dow === 0;
+        return dow === 0 || dow === 6;
+      }
+      if (weekendRaw.length === 7) {
+        const map = [0, 1, 2, 3, 4, 5, 6];
+        return weekendRaw[map[dow]] === '1';
+      }
+      return dow === 0 || dow === 6;
+    };
+    let remaining = days;
+    while (remaining > 0) {
+      date.setDate(date.getDate() + 1);
+      if (!isWeekendDay(date)) remaining--;
     }
     return String((date.getTime() / 86400000) + 25569);
   }
