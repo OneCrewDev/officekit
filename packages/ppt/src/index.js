@@ -38,6 +38,9 @@ export * from "./mutations.js";
 // Shape mutations
 export * from "./shapes.js";
 
+// Connector operations (addConnector, getConnectors, setConnectorEndpoints, removeConnector, setConnectorStyle)
+export * from "./connectors.js";
+
 // Table mutations
 export * from "./tables.js";
 
