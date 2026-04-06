@@ -107,6 +107,56 @@ describe("officekit CLI scaffold", () => {
     expect(outline.stdout).toContain("Sheet Analysis");
   });
 
+  test("adds, gets, sets, and removes named ranges", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-namedrange-"));
+    const filePath = path.join(dir, "namedrange.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/", "--type", "sheet", "--prop", "name=Analysis"]);
+    await runCli([
+      "add",
+      filePath,
+      "/",
+      "--type",
+      "namedrange",
+      "--prop",
+      "name=SalesRange",
+      "--prop",
+      "ref=Sheet1!A1:B5",
+      "--prop",
+      "scope=Analysis",
+      "--prop",
+      "comment=Tracked sales block",
+    ]);
+
+    const namedRange = await runCli(["get", filePath, "/namedrange[SalesRange]", "--json"]);
+    expect(namedRange.stdout).toContain('"name": "SalesRange"');
+    expect(namedRange.stdout).toContain('"ref": "Sheet1!A1:B5"');
+    expect(namedRange.stdout).toContain('"scope": "Analysis"');
+    expect(namedRange.stdout).toContain('"comment": "Tracked sales block"');
+
+    await runCli([
+      "set",
+      filePath,
+      "/namedrange[SalesRange]",
+      "--prop",
+      "ref=Analysis!C1:D4",
+      "--prop",
+      "comment=Updated block",
+    ]);
+    const updated = await runCli(["get", filePath, "/namedrange[1]", "--json"]);
+    expect(updated.stdout).toContain('"ref": "Analysis!C1:D4"');
+    expect(updated.stdout).toContain('"comment": "Updated block"');
+
+    const workbookXml = readStoredZip(await readFile(filePath)).get("xl/workbook.xml")!.toString("utf8");
+    expect(workbookXml).toContain('<definedName name="SalesRange"');
+    expect(workbookXml).toContain('localSheetId="1"');
+    expect(workbookXml).toContain('comment="Updated block"');
+
+    await runCli(["remove", filePath, "/namedrange[SalesRange]"]);
+    const raw = await runCli(["raw", filePath]);
+    expect(raw.stdout).not.toContain('SalesRange');
+  });
+
   test("preserves authored Excel formulas in created workbooks", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-formula-"));
     const filePath = path.join(dir, "formula.xlsx");

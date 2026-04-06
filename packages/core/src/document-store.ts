@@ -55,11 +55,30 @@ export interface ExcelWorkbookSettings {
   lockWindows?: boolean;
 }
 
+export interface ExcelNamedRange {
+  name: string;
+  ref: string;
+  scope?: string;
+  comment?: string;
+}
+
 export interface ExcelSheet {
   name: string;
   cells: Record<string, ExcelCell>;
   autoFilter?: string;
   freezeTopLeftCell?: string;
+  zoom?: number;
+  showGridLines?: boolean;
+  showHeadings?: boolean;
+  tabColor?: string;
+  header?: string;
+  footer?: string;
+  orientation?: string;
+  paperSize?: number;
+  fitToPage?: string;
+  protection?: boolean;
+  rowBreaks?: number[];
+  colBreaks?: number[];
 }
 
 export interface PptShape {
@@ -91,6 +110,7 @@ export interface OfficekitDocument {
     sheets: ExcelSheet[];
     settings?: ExcelWorkbookSettings;
     styleSheetXml?: string;
+    namedRanges?: ExcelNamedRange[];
   };
   powerpoint?: { slides: PptSlide[] };
 }
@@ -109,6 +129,13 @@ export interface ImportOptions {
   delimiter: string;
   hasHeader: boolean;
   startCell: string;
+}
+
+export interface RawDocumentOptions {
+  partPath?: string;
+  startRow?: number;
+  endRow?: number;
+  cols?: string[];
 }
 
 export async function createDocument(filePath: string) {
@@ -141,6 +168,34 @@ export async function addDocumentNode(filePath: string, targetPath: string, opti
       );
     }
     case "excel": {
+      if (options.type === "namedrange" || options.type === "definedname") {
+        if (targetPath !== "/" && targetPath !== "/workbook") {
+          throw new UsageError(
+            "Excel add namedrange currently supports only the workbook root.",
+            "Use: officekit add book.xlsx / --type namedrange --prop name=Range1 --prop ref=Sheet1!A1",
+          );
+        }
+        const name = options.props.name ?? "";
+        if (!name) {
+          throw new UsageError("Excel namedrange requires --prop name=...", "Provide both name and ref properties.");
+        }
+        const ref = options.props.ref ?? "";
+        if (!ref) {
+          throw new UsageError("Excel namedrange requires --prop ref=...", "Provide both name and ref properties.");
+        }
+        document.excel ??= { sheets: [], namedRanges: [] };
+        document.excel.namedRanges ??= [];
+        if (document.excel.namedRanges.some((range) => range.name.toLowerCase() === name.toLowerCase())) {
+          throw new OfficekitError(`Named range '${name}' already exists.`, "duplicate_named_range");
+        }
+        document.excel.namedRanges.push({
+          name,
+          ref,
+          ...(options.props.scope ? { scope: options.props.scope } : {}),
+          ...(options.props.comment ? { comment: options.props.comment } : {}),
+        });
+        break;
+      }
       if (options.type === "sheet") {
         if (targetPath !== "/" && targetPath !== "/workbook") {
           throw new UsageError(
@@ -281,11 +336,45 @@ export async function setDocumentNode(filePath: string, targetPath: string, opti
       );
     }
   } else if (document.format === "excel") {
-    if (targetPath === "/" || targetPath === "/workbook") {
+    if (/^\/namedrange\[(.+)\]$/i.test(targetPath)) {
+      const range = resolveNamedRange(document, targetPath);
+      for (const [key, value] of Object.entries(options.props)) {
+        switch (key.toLowerCase()) {
+          case "name":
+            range.name = value;
+            break;
+          case "ref":
+            range.ref = value;
+            break;
+          case "comment":
+            range.comment = value;
+            break;
+          case "scope":
+            range.scope = value.toLowerCase() === "workbook" ? undefined : value;
+            break;
+          default:
+            throw new UsageError(`Unsupported namedrange property '${key}'.`, "Supported: name, ref, comment, scope.");
+        }
+      }
+    } else if (targetPath === "/" || targetPath === "/workbook") {
       document.excel ??= { sheets: [], settings: {} };
       document.excel.settings = mergeWorkbookSettings(document.excel.settings, options.props);
+    } else if (/^\/([^/]+)$/i.test(targetPath)) {
+      const sheetName = /^\/([^/]+)$/i.exec(targetPath)?.[1] ?? "Sheet1";
+      const sheet = ensureSheet(document, sheetName);
+      applySheetProperties(document, sheet, options.props);
+    } else if (/^\/([^/]+)\/autofilter$/i.test(targetPath)) {
+      const sheetName = /^\/([^/]+)\/autofilter$/i.exec(targetPath)?.[1] ?? "Sheet1";
+      const sheet = ensureSheet(document, sheetName);
+      sheet.autoFilter = options.props.ref ?? options.props.range ?? sheet.autoFilter;
+    } else if (/^\/([^/]+)\/([A-Z]+\d+):([A-Z]+\d+)$/i.test(targetPath)) {
+      const [, sheetName, startRef, endRef] = /^\/([^/]+)\/([A-Z]+\d+):([A-Z]+\d+)$/i.exec(targetPath) ?? [];
+      const sheet = ensureSheet(document, sheetName ?? "Sheet1");
+      for (const ref of enumerateRangeRefs((startRef ?? "A1").toUpperCase(), (endRef ?? "A1").toUpperCase())) {
+        sheet.cells[ref] = mergeExcelCell(sheet.cells[ref], options.props);
+      }
     } else {
-    const { sheet, cellRef } = resolveExcelPath(document, targetPath);
+      const { sheet, cellRef } = resolveExcelPath(document, targetPath);
       sheet.cells[cellRef] = mergeExcelCell(sheet.cells[cellRef], options.props);
     }
   } else {
@@ -323,8 +412,23 @@ export async function removeDocumentNode(filePath: string, targetPath: string) {
       throw new UsageError("Word remove currently supports /body/p[n] or /body/table[n].");
     }
   } else if (document.format === "excel") {
-    const { sheet, cellRef } = resolveExcelPath(document, targetPath);
-    delete sheet.cells[cellRef];
+    if (/^\/namedrange\[(.+)\]$/i.test(targetPath)) {
+      const ranges = document.excel?.namedRanges ?? [];
+      const resolved = resolveNamedRangeIndex(ranges, targetPath);
+      ranges.splice(resolved, 1);
+    } else if (/^\/([^/]+)\/row\[(\d+)\]$/i.test(targetPath)) {
+      const [, sheetName, rowRef] = /^\/([^/]+)\/row\[(\d+)\]$/i.exec(targetPath) ?? [];
+      const sheet = ensureSheet(document, sheetName ?? "Sheet1");
+      const rowNumber = Number(rowRef);
+      for (const ref of Object.keys(sheet.cells)) {
+        if (Number(/\d+/.exec(ref)?.[0] ?? "0") === rowNumber) {
+          delete sheet.cells[ref];
+        }
+      }
+    } else {
+      const { sheet, cellRef } = resolveExcelPath(document, targetPath);
+      delete sheet.cells[cellRef];
+    }
   } else {
     const shapeMatch = /^\/slide\[(\d+)\]\/shape\[(\d+)\]$/.exec(targetPath);
     const slideMatch = /^\/slide\[(\d+)\]$/.exec(targetPath);
@@ -347,8 +451,22 @@ export async function getDocumentNode(filePath: string, targetPath: string) {
   return materializePath(document, targetPath);
 }
 
+export async function queryDocumentNodes(filePath: string, selector: string) {
+  const document = await loadDocument(filePath);
+  if (document.format !== "excel") {
+    return [materializePath(document, selector)];
+  }
+  return queryExcelNodes(document, selector);
+}
+
 export async function viewDocument(filePath: string, mode: string) {
   const document = await loadDocument(filePath);
+  if (document.format === "excel") {
+    return {
+      mode,
+      output: renderExcelView(document, mode),
+    };
+  }
   if (mode === "html") {
     return {
       mode,
@@ -382,7 +500,14 @@ export async function checkDocument(filePath: string) {
   };
 }
 
-export async function rawDocument(filePath: string) {
+export async function rawDocument(filePath: string, options: RawDocumentOptions = {}) {
+  if (options.partPath) {
+    const format = assertFormat(filePath);
+    if (format === "excel") {
+      const zip = readStoredZip(await readFile(filePath));
+      return renderExcelRaw(zip, options, await loadDocument(filePath));
+    }
+  }
   const document = await loadDocument(filePath);
   return JSON.stringify(document, null, 2);
 }
@@ -594,7 +719,48 @@ function materializePath(document: OfficekitDocument, targetPath: string) {
   }
 
   if (document.format === "excel") {
-    if (targetPath === "/workbook") return document.excel;
+    if (targetPath === "/" || targetPath === "/workbook") return document.excel;
+    if (/^\/namedrange\[(.+)\]$/i.test(targetPath)) {
+      return resolveNamedRange(document, targetPath);
+    }
+    const rowMatch = /^\/([^/]+)\/row\[(\d+)\]$/i.exec(targetPath);
+    if (rowMatch) {
+      const sheet = ensureSheet(document, rowMatch[1]);
+      const rowNumber = Number(rowMatch[2]);
+      return {
+        path: targetPath,
+        row: rowNumber,
+        cells: getRowCells(sheet, rowNumber),
+      };
+    }
+    const colMatch = /^\/([^/]+)\/col\[([A-Z]+)\]$/i.exec(targetPath);
+    if (colMatch) {
+      const sheet = ensureSheet(document, colMatch[1]);
+      const column = colMatch[2].toUpperCase();
+      return {
+        path: targetPath,
+        column,
+        cells: getColumnCells(sheet, column),
+        ...(sheet.tabColor ? { tabColor: sheet.tabColor } : {}),
+      };
+    }
+    const rangeMatch = /^\/([^/]+)\/([A-Z]+\d+):([A-Z]+\d+)$/i.exec(targetPath);
+    if (rangeMatch) {
+      const sheet = ensureSheet(document, rangeMatch[1]);
+      return {
+        path: targetPath,
+        sheet: sheet.name,
+        cells: getRangeCells(sheet, rangeMatch[2].toUpperCase(), rangeMatch[3].toUpperCase()),
+      };
+    }
+    const autoFilterMatch = /^\/([^/]+)\/autofilter$/i.exec(targetPath);
+    if (autoFilterMatch) {
+      const sheet = ensureSheet(document, autoFilterMatch[1]);
+      return {
+        path: targetPath,
+        ref: sheet.autoFilter ?? null,
+      };
+    }
     const { sheet, cellRef } = resolveExcelPath(document, targetPath);
     if (!cellRef) return sheet;
     const cell = sheet.cells[cellRef];
@@ -628,6 +794,32 @@ function ensureSheet(document: OfficekitDocument, name: string) {
   return sheet;
 }
 
+function resolveNamedRange(document: OfficekitDocument, targetPath: string) {
+  const ranges = document.excel?.namedRanges ?? [];
+  const index = resolveNamedRangeIndex(ranges, targetPath);
+  const range = ranges[index];
+  if (!range) {
+    throw new OfficekitError(`Named range '${targetPath}' does not exist.`, "not_found");
+  }
+  return range;
+}
+
+function resolveNamedRangeIndex(ranges: ExcelNamedRange[], targetPath: string) {
+  const selector = /^\/namedrange\[(.+)\]$/i.exec(targetPath)?.[1] ?? "";
+  if (/^\d+$/.test(selector)) {
+    const index = Number(selector) - 1;
+    if (index < 0 || index >= ranges.length) {
+      throw new OfficekitError(`Named range index ${selector} is out of range.`, "not_found");
+    }
+    return index;
+  }
+  const index = ranges.findIndex((range) => range.name.toLowerCase() === selector.toLowerCase());
+  if (index === -1) {
+    throw new OfficekitError(`Named range '${selector}' not found.`, "not_found");
+  }
+  return index;
+}
+
 function nextAvailableRowIndex(sheet: ExcelSheet) {
   const refs = Object.keys(sheet.cells);
   if (refs.length === 0) return 1;
@@ -648,6 +840,130 @@ function resolveExcelPath(document: OfficekitDocument, targetPath: string) {
   }
   const sheetName = targetPath.replace(/^\//, "") || "Sheet1";
   return { sheet: ensureSheet(document, sheetName), cellRef: "" };
+}
+
+function getRowCells(sheet: ExcelSheet, rowNumber: number) {
+  return Object.entries(sheet.cells)
+    .filter(([ref]) => Number(/\d+/.exec(ref)?.[0] ?? "0") === rowNumber)
+    .sort(([left], [right]) => compareCellRefs(left, right))
+    .map(([ref, cell]) => ({ ref, ...cell }));
+}
+
+function getColumnCells(sheet: ExcelSheet, column: string) {
+  return Object.entries(sheet.cells)
+    .filter(([ref]) => /^([A-Z]+)/.exec(ref)?.[1] === column)
+    .sort(([left], [right]) => compareCellRefs(left, right))
+    .map(([ref, cell]) => ({ ref, ...cell }));
+}
+
+function getRangeCells(sheet: ExcelSheet, startRef: string, endRef: string) {
+  const start = parseCellAddress(startRef);
+  const end = parseCellAddress(endRef);
+  const startColumn = columnNameToIndex(start.column);
+  const endColumn = columnNameToIndex(end.column);
+  const cells: Array<{ ref: string } & ExcelCell> = [];
+  for (let row = Math.min(start.row, end.row); row <= Math.max(start.row, end.row); row += 1) {
+    for (let column = Math.min(startColumn, endColumn); column <= Math.max(startColumn, endColumn); column += 1) {
+      const ref = `${indexToColumnName(column)}${row}`;
+      const cell = sheet.cells[ref] ?? { value: "" };
+      cells.push({ ref, ...cell });
+    }
+  }
+  return cells;
+}
+
+function enumerateRangeRefs(startRef: string, endRef: string) {
+  return getRangeCells({ name: "", cells: {} }, startRef, endRef).map((cell) => cell.ref);
+}
+
+function compareCellRefs(left: string, right: string) {
+  const leftCell = parseCellAddress(left);
+  const rightCell = parseCellAddress(right);
+  const leftColumn = columnNameToIndex(leftCell.column);
+  const rightColumn = columnNameToIndex(rightCell.column);
+  if (leftCell.row !== rightCell.row) {
+    return leftCell.row - rightCell.row;
+  }
+  return leftColumn - rightColumn;
+}
+
+function applySheetProperties(document: OfficekitDocument, sheet: ExcelSheet, props: Record<string, string>) {
+  const currentName = sheet.name;
+  for (const [key, value] of Object.entries(props)) {
+    const normalized = key.toLowerCase();
+    switch (normalized) {
+      case "name":
+        if (document.excel!.sheets.some((candidate) => candidate !== sheet && candidate.name.toLowerCase() === value.toLowerCase())) {
+          throw new OfficekitError(`Sheet '${value}' already exists.`, "duplicate_sheet");
+        }
+        sheet.name = value;
+        break;
+      case "freeze":
+        sheet.freezeTopLeftCell = value;
+        break;
+      case "zoom":
+        sheet.zoom = Number(value);
+        break;
+      case "gridlines":
+        sheet.showGridLines = isTruthy(value);
+        break;
+      case "headings":
+        sheet.showHeadings = isTruthy(value);
+        break;
+      case "tabcolor":
+        sheet.tabColor = normalizeColorValue(value);
+        break;
+      case "header":
+        sheet.header = value;
+        break;
+      case "footer":
+        sheet.footer = value;
+        break;
+      case "orientation":
+        sheet.orientation = value.toLowerCase();
+        break;
+      case "papersize":
+        sheet.paperSize = Number(value);
+        break;
+      case "fittopage":
+        sheet.fitToPage = value;
+        break;
+      case "protect":
+        sheet.protection = isTruthy(value);
+        break;
+      case "autofilter":
+        sheet.autoFilter = value;
+        break;
+      case "rowbreaks":
+        sheet.rowBreaks = parseBreakList(value);
+        break;
+      case "colbreaks":
+        sheet.colBreaks = parseBreakList(value);
+        break;
+      default:
+        throw new UsageError(
+          `Unsupported Excel sheet property '${key}'.`,
+          "Supported: name, freeze, zoom, gridlines, headings, tabColor, header, footer, orientation, paperSize, fitToPage, protect, autoFilter, rowBreaks, colBreaks.",
+        );
+    }
+  }
+  if (sheet.name !== currentName) {
+    for (const range of document.excel?.namedRanges ?? []) {
+      if (range.scope?.toLowerCase() === currentName.toLowerCase()) {
+        range.scope = sheet.name;
+      }
+      if (range.ref.startsWith(`${currentName}!`)) {
+        range.ref = `${sheet.name}!${range.ref.slice(currentName.length + 1)}`;
+      }
+    }
+  }
+}
+
+function parseBreakList(value: string) {
+  return value
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isFinite(item) && item > 0);
 }
 
 function resolveSlide(document: OfficekitDocument, targetPath: string) {
@@ -804,6 +1120,7 @@ function renderWorkbookXml(document: OfficekitDocument) {
   const workbookPr = renderWorkbookProperties(document.excel?.settings);
   const calcPr = renderCalculationProperties(document.excel?.settings);
   const workbookProtection = renderWorkbookProtection(document.excel?.settings);
+  const definedNames = renderDefinedNames(document.excel?.namedRanges, document.excel?.sheets ?? []);
   const sheets = document.excel!.sheets
     .map((sheet, index) => `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`)
     .join("");
@@ -812,6 +1129,7 @@ function renderWorkbookXml(document: OfficekitDocument) {
   ${workbookPr}
   ${workbookProtection}
   <sheets>${sheets}</sheets>
+  ${definedNames}
   ${calcPr}
 </workbook>`;
 }
@@ -873,6 +1191,26 @@ function renderWorkbookProtection(settings?: ExcelWorkbookSettings) {
   ].filter(Boolean);
 
   return attrs.length > 0 ? `<workbookProtection ${attrs.join(" ")}/>` : "";
+}
+
+function renderDefinedNames(namedRanges: ExcelNamedRange[] | undefined, sheets: ExcelSheet[]) {
+  if (!namedRanges || namedRanges.length === 0) {
+    return "";
+  }
+  const items = namedRanges
+    .map((range) => {
+      const scopeIndex = range.scope
+        ? sheets.findIndex((sheet) => sheet.name.toLowerCase() === range.scope!.toLowerCase())
+        : -1;
+      const attrs = [
+        `name="${escapeXml(range.name)}"`,
+        ...(scopeIndex >= 0 ? [`localSheetId="${scopeIndex}"`] : []),
+        ...(range.comment ? [`comment="${escapeXml(range.comment)}"`] : []),
+      ];
+      return `<definedName ${attrs.join(" ")}>${escapeXml(range.ref)}</definedName>`;
+    })
+    .join("");
+  return `<definedNames>${items}</definedNames>`;
 }
 
 function renderSheetXml(sheet: ExcelSheet) {
@@ -1030,9 +1368,22 @@ function normalizeDocument(document: OfficekitDocument): OfficekitDocument {
         ),
         ...(sheet.autoFilter ? { autoFilter: sheet.autoFilter } : {}),
         ...(sheet.freezeTopLeftCell ? { freezeTopLeftCell: sheet.freezeTopLeftCell } : {}),
+        ...(sheet.zoom !== undefined ? { zoom: sheet.zoom } : {}),
+        ...(sheet.showGridLines !== undefined ? { showGridLines: sheet.showGridLines } : {}),
+        ...(sheet.showHeadings !== undefined ? { showHeadings: sheet.showHeadings } : {}),
+        ...(sheet.tabColor ? { tabColor: sheet.tabColor } : {}),
+        ...(sheet.header ? { header: sheet.header } : {}),
+        ...(sheet.footer ? { footer: sheet.footer } : {}),
+        ...(sheet.orientation ? { orientation: sheet.orientation } : {}),
+        ...(sheet.paperSize !== undefined ? { paperSize: sheet.paperSize } : {}),
+        ...(sheet.fitToPage ? { fitToPage: sheet.fitToPage } : {}),
+        ...(sheet.protection !== undefined ? { protection: sheet.protection } : {}),
+        ...(sheet.rowBreaks?.length ? { rowBreaks: [...sheet.rowBreaks] } : {}),
+        ...(sheet.colBreaks?.length ? { colBreaks: [...sheet.colBreaks] } : {}),
       })),
       ...(document.excel.settings ? { settings: document.excel.settings } : {}),
       ...(document.excel.styleSheetXml ? { styleSheetXml: document.excel.styleSheetXml } : {}),
+      ...(document.excel.namedRanges ? { namedRanges: document.excel.namedRanges } : {}),
     };
   }
   return document;
@@ -1102,6 +1453,7 @@ function parseExcelDocument(zip: Map<string, Buffer>): OfficekitDocument {
       sheets,
       ...(Object.keys(workbookSettings).length > 0 ? { settings: workbookSettings } : {}),
       ...(styleSheetXml ? { styleSheetXml } : {}),
+      ...(parseDefinedNames(workbookXml, sheets).length > 0 ? { namedRanges: parseDefinedNames(workbookXml, sheets) } : {}),
     },
   };
 }
@@ -1286,6 +1638,22 @@ function parseWorkbookSettings(xml: string): ExcelWorkbookSettings {
     ...parseCalculationPropertyAttributes(calcAttrs),
     ...parseWorkbookProtectionAttributes(protectionAttrs),
   };
+}
+
+function parseDefinedNames(workbookXml: string, sheets: ExcelSheet[]) {
+  return [...workbookXml.matchAll(/<(?:\w+:)?definedName\b([^>]*)>([\s\S]*?)<\/(?:\w+:)?definedName>/g)].map((match) => {
+    const attrs = match[1];
+    const ref = decodeXml(match[2]);
+    const name = decodeXml(/name="([^"]+)"/.exec(attrs)?.[1] ?? "");
+    const localSheetId = /localSheetId="([^"]+)"/.exec(attrs)?.[1];
+    const comment = /comment="([^"]+)"/.exec(attrs)?.[1];
+    return {
+      name,
+      ref,
+      ...(localSheetId !== undefined && sheets[Number(localSheetId)] ? { scope: sheets[Number(localSheetId)].name } : {}),
+      ...(comment ? { comment: decodeXml(comment) } : {}),
+    };
+  });
 }
 
 function parseSharedStrings(zip: Map<string, Buffer>) {
