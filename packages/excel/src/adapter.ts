@@ -3278,6 +3278,10 @@ function evaluateFormulaForDisplay(state: ExcelWorkbookState | undefined, sheet:
     if (conditionalAggregation !== undefined) {
       return conditionalAggregation;
     }
+    const textJoin = evaluateTextJoinFormula(state, normalized.trim(), sheet);
+    if (textJoin !== undefined) {
+      return textJoin;
+    }
   }
   const visited = new Set<string>();
   const numeric = evaluateFormulaExpression(state, sheet, ref, visited);
@@ -3851,7 +3855,119 @@ function evaluateConditionalAggregationFormula(state: ExcelWorkbookState | undef
     return String(values.reduce((sum, value) => sum + value, 0) / values.length);
   }
 
+  const sumIfsMatch = /^SUMIFS\((.+)\)$/i.exec(formula);
+  if (sumIfsMatch) {
+    const args = splitFormulaArgs(sumIfsMatch[1]);
+    if (args.length < 3) return undefined;
+    const sumRange = resolveRangeReference(state, args[0].trim(), sheet);
+    if (!sumRange) return undefined;
+    const sumCells = flattenRange(sumRange);
+    let total = 0;
+    for (let index = 0; index < sumCells.length; index += 1) {
+      let matched = true;
+      for (let cursor = 1; cursor + 1 < args.length; cursor += 2) {
+        const criteriaRange = resolveRangeReference(state, args[cursor].trim(), sheet);
+        const criteria = resolveScalarValue(state, args[cursor + 1].trim(), sheet);
+        if (!criteriaRange || criteria === undefined) {
+          matched = false;
+          break;
+        }
+        if (!matchesFormulaCriteria(flattenRange(criteriaRange)[index] ?? { value: "" }, criteria)) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) {
+        total += Number(formatResolvedCellValue(sumCells[index]) || 0);
+      }
+    }
+    return String(total);
+  }
+
+  const countIfsMatch = /^COUNTIFS\((.+)\)$/i.exec(formula);
+  if (countIfsMatch) {
+    const args = splitFormulaArgs(countIfsMatch[1]);
+    if (args.length < 2) return undefined;
+    const firstRange = resolveRangeReference(state, args[0].trim(), sheet);
+    if (!firstRange) return undefined;
+    const firstCells = flattenRange(firstRange);
+    let count = 0;
+    for (let index = 0; index < firstCells.length; index += 1) {
+      let matched = true;
+      for (let cursor = 0; cursor + 1 < args.length; cursor += 2) {
+        const criteriaRange = resolveRangeReference(state, args[cursor].trim(), sheet);
+        const criteria = resolveScalarValue(state, args[cursor + 1].trim(), sheet);
+        if (!criteriaRange || criteria === undefined) {
+          matched = false;
+          break;
+        }
+        if (!matchesFormulaCriteria(flattenRange(criteriaRange)[index] ?? { value: "" }, criteria)) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) count += 1;
+    }
+    return String(count);
+  }
+
+  const averageIfsMatch = /^AVERAGEIFS\((.+)\)$/i.exec(formula);
+  if (averageIfsMatch) {
+    const args = splitFormulaArgs(averageIfsMatch[1]);
+    if (args.length < 3) return undefined;
+    const averageRange = resolveRangeReference(state, args[0].trim(), sheet);
+    if (!averageRange) return undefined;
+    const averageCells = flattenRange(averageRange);
+    const values: number[] = [];
+    for (let index = 0; index < averageCells.length; index += 1) {
+      let matched = true;
+      for (let cursor = 1; cursor + 1 < args.length; cursor += 2) {
+        const criteriaRange = resolveRangeReference(state, args[cursor].trim(), sheet);
+        const criteria = resolveScalarValue(state, args[cursor + 1].trim(), sheet);
+        if (!criteriaRange || criteria === undefined) {
+          matched = false;
+          break;
+        }
+        if (!matchesFormulaCriteria(flattenRange(criteriaRange)[index] ?? { value: "" }, criteria)) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) {
+        const numeric = Number(formatResolvedCellValue(averageCells[index]));
+        if (Number.isFinite(numeric)) values.push(numeric);
+      }
+    }
+    if (values.length === 0) return undefined;
+    return String(values.reduce((sum, value) => sum + value, 0) / values.length);
+  }
+
   return undefined;
+}
+
+function evaluateTextJoinFormula(state: ExcelWorkbookState | undefined, formula: string, sheet: ExcelSheetModel) {
+  const textJoinMatch = /^TEXTJOIN\((.+)\)$/i.exec(formula);
+  if (!textJoinMatch) return undefined;
+  const args = splitFormulaArgs(textJoinMatch[1]);
+  if (args.length < 3) return undefined;
+  const delimiter = resolveScalarValue(state, args[0].trim(), sheet)?.replace(/^"|"$/g, "") ?? "";
+  const ignoreEmpty = isTruthy(String(resolveScalarValue(state, args[1].trim(), sheet) ?? "false"));
+  const parts: string[] = [];
+  for (const arg of args.slice(2)) {
+    const range = resolveRangeReference(state, arg.trim(), sheet);
+    if (range) {
+      for (const cell of flattenRange(range)) {
+        const value = formatResolvedCellValue(cell);
+        if (!ignoreEmpty || value !== "") parts.push(value);
+      }
+      continue;
+    }
+    const scalar = resolveScalarValue(state, arg.trim(), sheet);
+    if (scalar !== undefined && (!ignoreEmpty || scalar !== "")) {
+      parts.push(scalar.replace(/^"|"$/g, ""));
+    }
+  }
+  return parts.join(delimiter);
 }
 
 function evaluateCondition(state: ExcelWorkbookState | undefined, condition: string, sheet: ExcelSheetModel, visited: Set<string>) {
