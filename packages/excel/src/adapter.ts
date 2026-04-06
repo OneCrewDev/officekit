@@ -88,6 +88,14 @@ export interface ExcelChartModel {
   categoryAxisTitle?: string;
   valueAxisTitle?: string;
   seriesNames?: string[];
+  axisMin?: number;
+  axisMax?: number;
+  majorUnit?: number;
+  minorUnit?: number;
+  axisNumberFormat?: string;
+  styleId?: number;
+  plotAreaFill?: string;
+  chartAreaFill?: string;
 }
 
 export interface ExcelPivotTableModel {
@@ -1040,7 +1048,7 @@ function materializeExcelPath(state: ExcelWorkbookState, targetPath: string): un
   if (!range) {
     return materializeSheetNode(state, targetPath);
   }
-  return range.includes(":") ? materializeRangeNode(sheet, range) : materializeCellNode(sheet, range);
+  return range.includes(":") ? materializeRangeNode(sheet, range, state) : materializeCellNode(sheet, range, state);
 }
 
 function materializeWorkbookRoot(state: ExcelWorkbookState) {
@@ -1096,20 +1104,20 @@ function materializeSheetNode(state: ExcelWorkbookState, targetPath: string) {
   };
 }
 
-function materializeRangeNode(sheet: ExcelSheetModel, range: string) {
+function materializeRangeNode(sheet: ExcelSheetModel, range: string, state?: ExcelWorkbookState) {
   return {
     path: `/${sheet.name}/${range}`,
     type: "range",
-    cells: expandRange(range).map((ref) => materializeCellNode(sheet, ref)),
+    cells: expandRange(range).map((ref) => materializeCellNode(sheet, ref, state)),
   };
 }
 
-function materializeCellNode(sheet: ExcelSheetModel, ref: string) {
+function materializeCellNode(sheet: ExcelSheetModel, ref: string, state?: ExcelWorkbookState) {
   const cell = sheet.cells[ref];
   if (!cell) {
     return { path: `/${sheet.name}/${ref}`, ref, type: "cell", value: null };
   }
-  const evaluatedValue = cell.formula && cell.value === "" ? evaluateFormulaForDisplay(sheet, ref) : undefined;
+  const evaluatedValue = cell.formula && cell.value === "" ? evaluateFormulaForDisplay(state, sheet, ref) : undefined;
   return {
     path: `/${sheet.name}/${ref}`,
     ref,
@@ -1381,7 +1389,7 @@ function renderTextView(state: ExcelWorkbookState) {
       const ordered = [...cells.entries()]
         .sort(([a], [b]) => columnNameToIndex(a) - columnNameToIndex(b))
         .map(([column]) => {
-          const materialized = materializeCellNode(sheet, `${column}${rowIndex}`) as { value?: string | null; evaluatedValue?: string };
+          const materialized = materializeCellNode(sheet, `${column}${rowIndex}`, state) as { value?: string | null; evaluatedValue?: string };
           return materialized.evaluatedValue ?? materialized.value ?? "";
         });
       lines.push(`[/${sheet.name}/row[${rowIndex}]] ${ordered.join("\t")}`);
@@ -1396,7 +1404,7 @@ function renderAnnotatedView(state: ExcelWorkbookState) {
     lines.push(`=== Sheet: ${sheet.name} ===`);
     for (const ref of Object.keys(sheet.cells).sort(compareCellRefs)) {
       const cell = sheet.cells[ref];
-      const materialized = materializeCellNode(sheet, ref) as { value?: string | null; evaluatedValue?: string };
+      const materialized = materializeCellNode(sheet, ref, state) as { value?: string | null; evaluatedValue?: string };
       const value = materialized.evaluatedValue ?? materialized.value ?? "";
       const annotation = cell.formula ? `=${cell.formula}` : cell.type ?? "number";
       const warn = !cell.value && !cell.formula ? " empty" : cell.formula && value === "" ? " unevaluated-formula" : "";
@@ -1842,6 +1850,46 @@ function setChart(
     if (props.valueAxisTitle !== undefined || props.valaxistitle !== undefined) {
       xml = setAxisTitle(xml, "valAx", props.valueAxisTitle ?? props.valaxistitle ?? "");
     }
+    if (props.axismin !== undefined || props.min !== undefined) {
+      xml = setAxisValue(xml, "minVal", props.axismin ?? props.min ?? "0");
+    }
+    if (props.axismax !== undefined || props.max !== undefined) {
+      xml = setAxisValue(xml, "maxVal", props.axismax ?? props.max ?? "0");
+    }
+    if (props.majorunit !== undefined) {
+      xml = setAxisValue(xml, "majorUnit", props.majorunit);
+    }
+    if (props.minorunit !== undefined) {
+      xml = setAxisValue(xml, "minorUnit", props.minorunit);
+    }
+    if (props.axisnumfmt !== undefined || props.axisnumberformat !== undefined) {
+      const formatCode = props.axisnumfmt ?? props.axisnumberformat ?? "General";
+      if (/<c:numFmt\b[^>]*formatCode="[^"]+"/.test(xml)) {
+        xml = xml.replace(/<c:numFmt\b[^>]*formatCode="[^"]+"[^>]*sourceLinked="[^"]+"\/>/, `<c:numFmt formatCode="${escapeXml(formatCode)}" sourceLinked="0"/>`);
+      } else {
+        xml = xml.replace(/(<c:valAx\b[\s\S]*?<c:axId\b[^>]*\/>)/, `$1<c:numFmt formatCode="${escapeXml(formatCode)}" sourceLinked="0"/>`);
+      }
+    }
+    if (props.style !== undefined || props.styleid !== undefined) {
+      const styleValue = Number(props.style ?? props.styleid);
+      if (Number.isFinite(styleValue)) {
+        if (/<c:style\b[^>]*val="[^"]+"/.test(xml)) {
+          xml = xml.replace(/<c:style\b[^>]*val="[^"]+"\/>/, `<c:style val="${styleValue}"/>`);
+        } else {
+          xml = xml.replace(/<c:chartSpace\b[^>]*>/, `$&<c:style val="${styleValue}"/>`);
+        }
+      }
+    }
+    if (props.plotfill !== undefined || props.plotareafill !== undefined) {
+      xml = setChartFill(xml, "plotArea", props.plotfill ?? props.plotareafill ?? "");
+    }
+    if (props.chartfill !== undefined || props.chartareafill !== undefined) {
+      xml = setChartAreaFill(xml, props.chartfill ?? props.chartareafill ?? "");
+    }
+    if (props.colors !== undefined) {
+      const colors = props.colors.split(",").map((value) => value.trim()).filter(Boolean);
+      xml = setSeriesColors(xml, colors);
+    }
   }
   state.zip.set(xmlPath, Buffer.from(xml, "utf8"));
   return seriesIndex !== undefined
@@ -1906,6 +1954,56 @@ function setAxisTitle(xml: string, axisTag: "catAx" | "valAx", title: string) {
     ? axisXml.replace(/<c:title>[\s\S]*?<\/c:title>/, titleXml)
     : axisXml.replace(/>/, `>${titleXml}`);
   return xml.replace(axisXml, nextAxisXml);
+}
+
+function setAxisValue(xml: string, tag: "minVal" | "maxVal" | "majorUnit" | "minorUnit", value: string) {
+  const targetTag = `c:${tag}`;
+  const axisPattern = /<c:valAx\b[\s\S]*?<\/c:valAx>/;
+  const axisXml = axisPattern.exec(xml)?.[0];
+  if (!axisXml) {
+    return xml;
+  }
+  const nextAxisXml = new RegExp(`<${targetTag}\\b[^>]*val="[^"]+"\\s*\\/?>`).test(axisXml)
+    ? axisXml.replace(new RegExp(`<${targetTag}\\b[^>]*val="[^"]+"\\s*\\/?>`), `<${targetTag} val="${escapeXml(value)}"/>`)
+    : axisXml.replace(/<\/c:valAx>/, `<${targetTag} val="${escapeXml(value)}"/></c:valAx>`);
+  return xml.replace(axisXml, nextAxisXml);
+}
+
+function setChartFill(xml: string, scope: "plotArea", color: string) {
+  const fillXml = `<c:spPr><a:solidFill><a:srgbClr val="${escapeXml(color.replace(/^#/, "").toUpperCase())}"/></a:solidFill></c:spPr>`;
+  const pattern = /<c:plotArea\b[\s\S]*?<\/c:plotArea>/;
+  const plotArea = pattern.exec(xml)?.[0];
+  if (!plotArea) return xml;
+  const nextPlotArea = /<c:spPr\b[\s\S]*?<\/c:spPr>/.test(plotArea)
+    ? plotArea.replace(/<c:spPr\b[\s\S]*?<\/c:spPr>/, fillXml)
+    : plotArea.replace(/<c:plotArea\b[^>]*>/, `$&${fillXml}`);
+  return xml.replace(plotArea, nextPlotArea);
+}
+
+function setChartAreaFill(xml: string, color: string) {
+  const fillXml = `<c:spPr><a:solidFill><a:srgbClr val="${escapeXml(color.replace(/^#/, "").toUpperCase())}"/></a:solidFill></c:spPr>`;
+  const chartSpacePrefix = /<c:chartSpace\b[\s\S]*?<c:chart\b/.exec(xml)?.[0] ?? "";
+  if (/<c:spPr\b[\s\S]*?<\/c:spPr>/.test(chartSpacePrefix)) {
+    const nextPrefix = chartSpacePrefix.replace(/<c:spPr\b[\s\S]*?<\/c:spPr>/, fillXml);
+    return xml.replace(chartSpacePrefix, nextPrefix);
+  }
+  return xml.replace(/<c:chartSpace\b[^>]*>/, `$&${fillXml}`);
+}
+
+function setSeriesColors(xml: string, colors: string[]) {
+  const seriesMatches = [...xml.matchAll(/<c:ser\b[\s\S]*?<\/c:ser>/g)];
+  let nextXml = xml;
+  for (const [index, series] of seriesMatches.entries()) {
+    const color = colors[index];
+    if (!color) continue;
+    const normalized = color.replace(/^#/, "").toUpperCase();
+    const shapeProps = `<c:spPr><a:solidFill><a:srgbClr val="${escapeXml(normalized)}"/></a:solidFill></c:spPr>`;
+    const nextSeries = /<c:spPr\b[\s\S]*?<\/c:spPr>/.test(series[0])
+      ? series[0].replace(/<c:spPr\b[\s\S]*?<\/c:spPr>/, shapeProps)
+      : series[0].replace(/<c:tx>[\s\S]*?<\/c:tx>/, `$&${shapeProps}`);
+    nextXml = nextXml.replace(series[0], nextSeries);
+  }
+  return nextXml;
 }
 
 function setDrawingObject(
@@ -2267,6 +2365,16 @@ function getSheetCharts(state: ExcelWorkbookState, sheet: ExcelSheetModel) {
     const seriesNames = [...chartXml.matchAll(/<c:ser\b[\s\S]*?<c:tx>[\s\S]*?<c:v>([\s\S]*?)<\/c:v>[\s\S]*?<\/c:tx>[\s\S]*?<\/c:ser>/g)].map((seriesMatch) => decodeXml(seriesMatch[1]).trim());
     const legendPos = /<c:legendPos\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
     const dataLabels = /<c:dLbls\b[\s\S]*?<(?:c:showValue)\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
+    const axisMin = /<c:minVal\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
+    const axisMax = /<c:maxVal\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
+    const majorUnit = /<c:majorUnit\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
+    const minorUnit = /<c:minorUnit\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
+    const axisNumberFormat = /<c:numFmt\b[^>]*formatCode="([^"]+)"/.exec(chartXml)?.[1];
+    const styleId = /<c:style\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
+    const plotAreaXml = /<c:plotArea\b[\s\S]*?<\/c:plotArea>/.exec(chartXml)?.[0] ?? "";
+    const chartSpacePrefix = /<c:chartSpace\b[\s\S]*?<c:chart\b/.exec(chartXml)?.[0] ?? "";
+    const plotAreaFill = /<c:spPr\b[\s\S]*?<a:solidFill>\s*<a:srgbClr val="([^"]+)"/.exec(plotAreaXml)?.[1];
+    const chartAreaFill = /<c:spPr\b[\s\S]*?<a:solidFill>\s*<a:srgbClr val="([^"]+)"/.exec(chartSpacePrefix)?.[1];
     return {
       path: rel?.target ?? "",
       sheet: sheet.name,
@@ -2277,6 +2385,14 @@ function getSheetCharts(state: ExcelWorkbookState, sheet: ExcelSheetModel) {
       ...(decodeXml(/<c:catAx\b[\s\S]*?<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() ? { categoryAxisTitle: decodeXml(/<c:catAx\b[\s\S]*?<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() } : {}),
       ...(decodeXml(/<c:valAx\b[\s\S]*?<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() ? { valueAxisTitle: decodeXml(/<c:valAx\b[\s\S]*?<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() } : {}),
       ...(seriesNames.length > 0 ? { seriesNames } : {}),
+      ...(axisMin !== undefined ? { axisMin: Number(axisMin) } : {}),
+      ...(axisMax !== undefined ? { axisMax: Number(axisMax) } : {}),
+      ...(majorUnit !== undefined ? { majorUnit: Number(majorUnit) } : {}),
+      ...(minorUnit !== undefined ? { minorUnit: Number(minorUnit) } : {}),
+      ...(axisNumberFormat ? { axisNumberFormat } : {}),
+      ...(styleId !== undefined ? { styleId: Number(styleId) } : {}),
+      ...(plotAreaFill ? { plotAreaFill } : {}),
+      ...(chartAreaFill ? { chartAreaFill } : {}),
     };
   });
 }
@@ -2479,16 +2595,54 @@ function normalizeFormula(formula: string) {
   return formula.replace(/^=/, "");
 }
 
-function evaluateFormulaForDisplay(sheet: ExcelSheetModel, ref: string) {
+function evaluateFormulaForDisplay(state: ExcelWorkbookState | undefined, sheet: ExcelSheetModel, ref: string) {
+  const formula = sheet.cells[ref]?.formula;
+  if (formula) {
+    const normalized = normalizeFormula(formula);
+    const ifMatch = /^IF\((.*)\)$/i.exec(normalized.trim());
+    if (ifMatch) {
+      const result = evaluateIfFast(state, ifMatch[1], sheet, new Set());
+      if (result !== undefined) return String(result);
+    }
+    const countaMatch = /^COUNTA\((.*)\)$/i.exec(normalized.trim());
+    if (countaMatch) {
+      return String(countFormulaArgs(state, countaMatch[1], sheet, new Set()));
+    }
+    const sumProductMatch = /^SUMPRODUCT\((.*)\)$/i.exec(normalized.trim());
+    if (sumProductMatch) {
+      return String(sumProductFormulaArgs(state, sumProductMatch[1], sheet, new Set()));
+    }
+  }
   const visited = new Set<string>();
-  const numeric = evaluateFormulaExpression(sheet, ref, visited);
+  const numeric = evaluateFormulaExpression(state, sheet, ref, visited);
   if (numeric === undefined || Number.isNaN(numeric)) {
     return undefined;
   }
   return Number.isInteger(numeric) ? String(numeric) : String(Number(numeric.toFixed(10)));
 }
 
-function evaluateFormulaExpression(sheet: ExcelSheetModel, ref: string, visited: Set<string>): number | undefined {
+function evaluateIfFast(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const [condition, whenTrue = "0", whenFalse = "0"] = splitFormulaArgs(args);
+  if (!condition) return undefined;
+  const conditionExpression = replaceFormulaRefsWithValues(state, condition, sheet, visited);
+  if (conditionExpression.includes("!")) return undefined;
+  try {
+    // eslint-disable-next-line no-new-func
+    const truthy = Boolean(Function(`return (${conditionExpression});`)());
+    return truthy
+      ? evaluateInlineFormulaArg(state, whenTrue.trim(), sheet, visited)
+      : evaluateInlineFormulaArg(state, whenFalse.trim(), sheet, visited);
+  } catch {
+    return undefined;
+  }
+}
+
+function evaluateFormulaExpression(
+  state: ExcelWorkbookState | undefined,
+  sheet: ExcelSheetModel,
+  ref: string,
+  visited: Set<string>,
+): number | undefined {
   const key = `${sheet.name}!${ref}`;
   if (visited.has(key)) {
     return undefined;
@@ -2506,29 +2660,38 @@ function evaluateFormulaExpression(sheet: ExcelSheetModel, ref: string, visited:
   }
 
   let expression = normalizeFormula(cell.formula);
+  const ifMatch = /^IF\((.*)\)$/i.exec(expression.trim());
+  if (ifMatch) {
+    const result = evaluateIfFormula(state, ifMatch[1], sheet, visited);
+    visited.delete(key);
+    return result;
+  }
   const aggregateMatch = /^(SUM|AVERAGE|MIN|MAX)\(([^()]+)\)$/i.exec(expression.trim());
   if (aggregateMatch) {
-    const result = foldFormulaArgs(aggregateMatch[2], sheet, visited, aggregateMatch[1].toUpperCase() === "SUM"
-      ? (values) => values.reduce((sum, value) => sum + value, 0)
+    const result = foldFormulaArgs(state, aggregateMatch[2], sheet, visited, aggregateMatch[1].toUpperCase() === "SUM"
+      ? (values: number[]) => values.reduce((sum: number, value: number) => sum + value, 0)
       : aggregateMatch[1].toUpperCase() === "AVERAGE"
-        ? (values) => values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
+        ? (values: number[]) => values.length > 0 ? values.reduce((sum: number, value: number) => sum + value, 0) / values.length : 0
         : aggregateMatch[1].toUpperCase() === "MIN"
-          ? (values) => values.length > 0 ? Math.min(...values) : 0
-          : (values) => values.length > 0 ? Math.max(...values) : 0);
+          ? (values: number[]) => values.length > 0 ? Math.min(...values) : 0
+          : (values: number[]) => values.length > 0 ? Math.max(...values) : 0);
     visited.delete(key);
     return result;
   }
   const functionEvaluators: Record<string, (args: string) => number | undefined> = {
-    SUM: (args) => foldFormulaArgs(args, sheet, visited, (values) => values.reduce((sum, value) => sum + value, 0)),
-    AVERAGE: (args) => foldFormulaArgs(args, sheet, visited, (values) => values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0),
-    MIN: (args) => foldFormulaArgs(args, sheet, visited, (values) => values.length > 0 ? Math.min(...values) : 0),
-    MAX: (args) => foldFormulaArgs(args, sheet, visited, (values) => values.length > 0 ? Math.max(...values) : 0),
+    SUM: (args) => foldFormulaArgs(state, args, sheet, visited, (values) => values.reduce((sum, value) => sum + value, 0)),
+    AVERAGE: (args) => foldFormulaArgs(state, args, sheet, visited, (values) => values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0),
+    MIN: (args) => foldFormulaArgs(state, args, sheet, visited, (values) => values.length > 0 ? Math.min(...values) : 0),
+    MAX: (args) => foldFormulaArgs(state, args, sheet, visited, (values) => values.length > 0 ? Math.max(...values) : 0),
+    COUNTA: (args) => countFormulaArgs(state, args, sheet, visited),
+    SUMPRODUCT: (args) => sumProductFormulaArgs(state, args, sheet, visited),
+    IF: (args) => evaluateIfFormula(state, args, sheet, visited),
   };
 
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNTA|SUMPRODUCT|IF)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -2539,7 +2702,15 @@ function evaluateFormulaExpression(sheet: ExcelSheetModel, ref: string, visited:
   }
 
   expression = expression.replace(/\b([A-Z]+[0-9]+)\b/g, (match, refValue) => {
-    const value = evaluateFormulaExpression(sheet, refValue.toUpperCase(), visited);
+    const value = evaluateFormulaExpression(state, sheet, refValue.toUpperCase(), visited);
+    return value === undefined ? match : String(value);
+  });
+
+  expression = expression.replace(/(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+)/g, (match, quotedSheet, plainSheet, refValue) => {
+    const targetSheetName = (quotedSheet ?? plainSheet ?? "").trim();
+    const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+    if (!targetSheet) return match;
+    const value = evaluateFormulaExpression(state, targetSheet, refValue.toUpperCase(), visited);
     return value === undefined ? match : String(value);
   });
 
@@ -2557,26 +2728,149 @@ function evaluateFormulaExpression(sheet: ExcelSheetModel, ref: string, visited:
 }
 
 function foldFormulaArgs(
+  state: ExcelWorkbookState | undefined,
   args: string,
   sheet: ExcelSheetModel,
   visited: Set<string>,
   reducer: (values: number[]) => number,
 ) {
-  const values = args
-    .split(",")
-    .flatMap((part) => {
+  const values = extractFormulaArgValues(state, args, sheet, visited);
+  return reducer(values);
+}
+
+function splitFormulaArgs(args: string) {
+  const values: string[] = [];
+  let current = "";
+  let depth = 0;
+  let inString = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const char = args[index];
+    if (char === '"') {
+      inString = !inString;
+      current += char;
+      continue;
+    }
+    if (!inString && char === "(") depth += 1;
+    if (!inString && char === ")") depth -= 1;
+    if (!inString && depth === 0 && char === ",") {
+      values.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current !== "") values.push(current);
+  return values;
+}
+
+function countFormulaArgs(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  return splitFormulaArgs(args)
+    .flatMap((part): Array<string | ExcelCellModel> => {
       const value = part.trim();
       if (/^[A-Z]+[0-9]+:[A-Z]+[0-9]+$/i.test(value)) {
-        return expandRange(value.toUpperCase()).map((ref) => evaluateFormulaExpression(sheet, ref, visited)).filter((item): item is number => item !== undefined);
+        return expandRange(value.toUpperCase()).map((ref) => sheet.cells[ref]).filter(Boolean);
       }
       if (/^[A-Z]+[0-9]+$/i.test(value)) {
-        const evaluated = evaluateFormulaExpression(sheet, value.toUpperCase(), visited);
+        return [sheet.cells[value.toUpperCase()]].filter(Boolean);
+      }
+      const crossSheetRange = /^(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+):([A-Z]+\d+)$/i.exec(value);
+      if (crossSheetRange) {
+        const targetSheetName = (crossSheetRange[1] ?? crossSheetRange[2] ?? "").trim();
+        const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+        return targetSheet ? expandRange(`${crossSheetRange[3].toUpperCase()}:${crossSheetRange[4].toUpperCase()}`).map((ref) => targetSheet.cells[ref]).filter(Boolean) : [];
+      }
+      return value !== "" ? [value] : [];
+    })
+    .filter((value: string | ExcelCellModel) => typeof value === "string" ? value !== "" : (value.value ?? "") !== "")
+    .length;
+}
+
+function sumProductFormulaArgs(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const arrays = splitFormulaArgs(args).map((part) => extractFormulaArgValues(state, part, sheet, visited));
+  if (arrays.length === 0) return 0;
+  const length = Math.min(...arrays.map((group) => group.length));
+  let total = 0;
+  for (let index = 0; index < length; index += 1) {
+    total += arrays.reduce((product, group) => product * (group[index] ?? 0), 1);
+  }
+  return total;
+}
+
+function evaluateIfFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const [condition, whenTrue = "0", whenFalse = "0"] = splitFormulaArgs(args);
+  if (!condition) return undefined;
+  const conditionExpression = replaceFormulaRefsWithValues(state, condition, sheet, visited);
+  try {
+    // eslint-disable-next-line no-new-func
+    const truthy = Boolean(Function(`return (${conditionExpression});`)());
+    return truthy
+      ? evaluateInlineFormulaArg(state, whenTrue.trim(), sheet, visited)
+      : evaluateInlineFormulaArg(state, whenFalse.trim(), sheet, visited);
+  } catch {
+    return undefined;
+  }
+}
+
+function replaceFormulaRefsWithValues(
+  state: ExcelWorkbookState | undefined,
+  expression: string,
+  sheet: ExcelSheetModel,
+  visited: Set<string>,
+) {
+  return expression
+    .replace(/(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+)/g, (match, quotedSheet, plainSheet, refValue) => {
+      const targetSheetName = (quotedSheet ?? plainSheet ?? "").trim();
+      const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+      return String(targetSheet ? (evaluateFormulaExpression(state, targetSheet, refValue.toUpperCase(), visited) ?? match) : match);
+    })
+    .replace(/\b([A-Z]+[0-9]+)\b/g, (match, refValue) => String(evaluateFormulaExpression(state, sheet, refValue.toUpperCase(), visited) ?? match));
+}
+
+function evaluateInlineFormulaArg(state: ExcelWorkbookState | undefined, arg: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  if (/^[A-Z]+[0-9]+$/i.test(arg)) {
+    return evaluateFormulaExpression(state, sheet, arg.toUpperCase(), visited);
+  }
+  const crossSheetCell = /^(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+)$/i.exec(arg);
+  if (crossSheetCell) {
+    const targetSheetName = (crossSheetCell[1] ?? crossSheetCell[2] ?? "").trim();
+    const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+    return targetSheet ? evaluateFormulaExpression(state, targetSheet, crossSheetCell[3].toUpperCase(), visited) : undefined;
+  }
+  const numeric = Number(arg.replace(/^"|"$/g, ""));
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function extractFormulaArgValues(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  return splitFormulaArgs(args)
+    .flatMap((part) => {
+      const value = part.trim();
+      const crossSheetRange = /^(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+):([A-Z]+\d+)$/i.exec(value);
+      if (crossSheetRange) {
+        const targetSheetName = (crossSheetRange[1] ?? crossSheetRange[2] ?? "").trim();
+        const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+        if (!targetSheet) return [];
+        return expandRange(`${crossSheetRange[3].toUpperCase()}:${crossSheetRange[4].toUpperCase()}`)
+          .map((ref) => evaluateFormulaExpression(state, targetSheet, ref, visited))
+          .filter((item): item is number => item !== undefined);
+      }
+      const crossSheetCell = /^(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+)$/i.exec(value);
+      if (crossSheetCell) {
+        const targetSheetName = (crossSheetCell[1] ?? crossSheetCell[2] ?? "").trim();
+        const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+        if (!targetSheet) return [];
+        const evaluated = evaluateFormulaExpression(state, targetSheet, crossSheetCell[3].toUpperCase(), visited);
+        return evaluated !== undefined ? [evaluated] : [];
+      }
+      if (/^[A-Z]+[0-9]+:[A-Z]+[0-9]+$/i.test(value)) {
+        return expandRange(value.toUpperCase()).map((ref) => evaluateFormulaExpression(state, sheet, ref, visited)).filter((item): item is number => item !== undefined);
+      }
+      if (/^[A-Z]+[0-9]+$/i.test(value)) {
+        const evaluated = evaluateFormulaExpression(state, sheet, value.toUpperCase(), visited);
         return evaluated !== undefined ? [evaluated] : [];
       }
       const numeric = Number(value);
       return Number.isFinite(numeric) ? [numeric] : [];
     });
-  return reducer(values);
 }
 
 function coerceCellToNumber(cell: ExcelCellModel) {

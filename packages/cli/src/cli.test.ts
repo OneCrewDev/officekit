@@ -462,6 +462,40 @@ describe("officekit CLI scaffold", () => {
     expect(sheetXml).toMatch(/<c r="B1" s="\d+">/);
   });
 
+  test("reuses equivalent styles and evaluates cross-sheet/common formulas", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-style-reuse-"));
+    const filePath = path.join(dir, "style-reuse.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["add", filePath, "/", "--type", "sheet", "--prop", "name=Summary"]);
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=5"]);
+    await runCli(["set", filePath, "/Sheet1/A2", "--prop", "value=7"]);
+    await runCli(["set", filePath, "/Summary/A1", "--prop", "value=1"]);
+    await runCli(["set", filePath, "/Summary/A2", "--prop", "value=2"]);
+    await runCli(["set", filePath, "/Summary/B1", "--prop", "formula==IF(Sheet1!A1>4,1,0)"]);
+    await runCli(["set", filePath, "/Summary/B2", "--prop", "formula==COUNTA(Sheet1!A1:A2,Summary!A1)"]);
+    await runCli(["set", filePath, "/Summary/B3", "--prop", "formula==SUMPRODUCT(Sheet1!A1:A2,Summary!A1:A2)"]);
+    await runCli(["set", filePath, "/Sheet1/B1", "--prop", "value=Styled", "--prop", "font.bold=true", "--prop", "fill=00FF00", "--prop", "alignment.horizontal=center"]);
+    await runCli(["set", filePath, "/Sheet1/B2", "--prop", "value=Styled too", "--prop", "font.bold=true", "--prop", "fill=00FF00", "--prop", "alignment.horizontal=center"]);
+
+    const b1 = await runCli(["get", filePath, "/Sheet1/B1", "--json"]);
+    const b2 = await runCli(["get", filePath, "/Sheet1/B2", "--json"]);
+    const summaryB1 = await runCli(["get", filePath, "/Summary/B1", "--json"]);
+    const summaryB2 = await runCli(["get", filePath, "/Summary/B2", "--json"]);
+    const summaryB3 = await runCli(["get", filePath, "/Summary/B3", "--json"]);
+    const textView = await runCli(["view", filePath, "text"]);
+    const rawStyles = await runCli(["raw", filePath, "/styles"]);
+
+    expect(b1.stdout).toContain('"styleId": "1"');
+    expect(b2.stdout).toContain('"styleId": "1"');
+    expect(summaryB1.stdout).toContain('"evaluatedValue": "1"');
+    expect(summaryB2.stdout).toContain('"evaluatedValue": "3"');
+    expect(summaryB3.stdout).toContain('"evaluatedValue": "19"');
+    expect(textView.stdout).toContain("[/Summary/row[1]] 1\t1");
+    expect(textView.stdout).toContain("[/Summary/row[2]] 2\t3");
+    expect(textView.stdout).toContain("[/Summary/row[3]] 19");
+    expect(rawStyles.stdout).toContain('<cellXfs count="2">');
+  });
+
   test("supports richer chart properties beyond title and series name", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-chart-props-"));
     const filePath = path.join(dir, "chart-props.xlsx");
@@ -481,6 +515,57 @@ describe("officekit CLI scaffold", () => {
     expect(rawChart.stdout).toContain('<c:showCategoryName val="1"');
     expect(rawChart.stdout).toContain("Months");
     expect(rawChart.stdout).toContain("Revenue");
+  });
+
+  test("supports deeper chart styling and axis controls", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-chart-deep-"));
+    const filePath = path.join(dir, "chart-deep.xlsx");
+    await writeFile(filePath, buildExternalExcelAdvancedObjectsZip());
+
+    await runCli([
+      "set",
+      filePath,
+      "/Sheet1/chart[1]",
+      "--prop",
+      "axismin=0",
+      "--prop",
+      "axismax=50",
+      "--prop",
+      "majorunit=10",
+      "--prop",
+      "minorunit=5",
+      "--prop",
+      "axisnumfmt=0.0",
+      "--prop",
+      "colors=FF0000,00FF00",
+      "--prop",
+      "plotfill=F1F5F9",
+      "--prop",
+      "chartfill=E2E8F0",
+      "--prop",
+      "style=12",
+    ]);
+
+    const chart = await runCli(["get", filePath, "/Sheet1/chart[1]", "--json"]);
+    const rawChart = await runCli(["raw", filePath, "/Sheet1/chart[1]"]);
+
+    expect(chart.stdout).toContain('"axisMin": 0');
+    expect(chart.stdout).toContain('"axisMax": 50');
+    expect(chart.stdout).toContain('"majorUnit": 10');
+    expect(chart.stdout).toContain('"minorUnit": 5');
+    expect(chart.stdout).toContain('"axisNumberFormat": "0.0"');
+    expect(chart.stdout).toContain('"styleId": 12');
+    expect(chart.stdout).toContain('"plotAreaFill": "F1F5F9"');
+    expect(chart.stdout).toContain('"chartAreaFill": "E2E8F0"');
+    expect(rawChart.stdout).toContain('<c:minVal val="0"');
+    expect(rawChart.stdout).toContain('<c:maxVal val="50"');
+    expect(rawChart.stdout).toContain('<c:majorUnit val="10"');
+    expect(rawChart.stdout).toContain('<c:minorUnit val="5"');
+    expect(rawChart.stdout).toContain('formatCode="0.0"');
+    expect(rawChart.stdout).toContain('<c:style val="12"');
+    expect(rawChart.stdout).toContain('srgbClr val="FF0000"');
+    expect(rawChart.stdout).toContain('srgbClr val="F1F5F9"');
+    expect(rawChart.stdout).toContain('srgbClr val="E2E8F0"');
   });
 
   test("creates and mutates a PowerPoint document vertical slice", async () => {
