@@ -83,3 +83,7 @@ export * from "./watch.js";
 
 // 3D Model operations (get3DModels, add3DModel, remove3DModel, set3DModelRotation)
 export * from "./models-3d.js";
+
+// MCP Server for AI assistant integration
+export * from "./mcp-server.js";
+export * from "./mcp-tools.js";
