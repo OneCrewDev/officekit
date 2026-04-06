@@ -3188,11 +3188,23 @@ function hasStyleProps(props: Record<string, string>) {
   return Object.keys(props).some((key) => {
     const lower = key.toLowerCase();
     return lower === "fill"
+      || lower === "bgcolor"
       || lower === "numfmt"
       || lower === "format"
       || lower === "numberformat"
+      || lower === "border"
+      || lower === "wrap"
+      || lower === "wraptext"
+      || lower === "halign"
+      || lower === "valign"
+      || lower === "rotation"
+      || lower === "indent"
+      || lower === "shrinktofit"
+      || lower === "locked"
+      || lower === "formulahidden"
       || lower.startsWith("font.")
-      || lower.startsWith("alignment.");
+      || lower.startsWith("alignment.")
+      || lower.startsWith("border.");
   });
 }
 
@@ -3200,14 +3212,15 @@ function registerStyle(state: ExcelWorkbookState, props: Record<string, string>)
   const stylesheet = parseStylesheet(state.styleSheetXml ?? buildDefaultStylesheetXml());
   const fontXml = buildFontXml(props);
   const fillXml = buildFillXml(props);
-  const borderXml = `<border><left/><right/><top/><bottom/><diagonal/></border>`;
+  const borderXml = buildBorderXml(props);
   const numFmtCode = props.numFmt ?? props.numfmt ?? props.format ?? props.numberformat;
   const numFmtId = numFmtCode ? ensureNumFmt(stylesheet, numFmtCode) : 0;
   const fontId = ensureFragment(stylesheet.fonts, fontXml, `<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>`);
   const fillId = ensureFragment(stylesheet.fills, fillXml, `<fill><patternFill patternType="none"/></fill>`);
   const borderId = ensureFragment(stylesheet.borders, borderXml, `<border><left/><right/><top/><bottom/><diagonal/></border>`);
   const alignmentXml = buildAlignmentXml(props);
-  const xfXml = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"${numFmtId ? ' applyNumberFormat="1"' : ''}${fontXml !== DEFAULT_FONT_XML ? ' applyFont="1"' : ''}${fillXml !== DEFAULT_FILL_XML ? ' applyFill="1"' : ''}${alignmentXml ? ' applyAlignment="1"' : ''}>${alignmentXml}</xf>`;
+  const protectionXml = buildProtectionXml(props);
+  const xfXml = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"${numFmtId ? ' applyNumberFormat="1"' : ''}${fontXml !== DEFAULT_FONT_XML ? ' applyFont="1"' : ''}${fillXml !== DEFAULT_FILL_XML ? ' applyFill="1"' : ''}${borderXml !== `<border><left/><right/><top/><bottom/><diagonal/></border>` ? ' applyBorder="1"' : ''}${alignmentXml ? ' applyAlignment="1"' : ''}${protectionXml ? ' applyProtection="1"' : ''}>${alignmentXml}${protectionXml}</xf>`;
   const xfId = ensureFragment(stylesheet.cellXfs, xfXml, `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>`);
   state.styleSheetXml = serializeStylesheet(stylesheet);
   return xfId;
@@ -3244,6 +3257,10 @@ function evaluateFormulaForDisplay(state: ExcelWorkbookState | undefined, sheet:
     if (ifMatch) {
       const result = evaluateIfFast(state, ifMatch[1], sheet, new Set());
       if (result !== undefined) return String(result);
+    }
+    const textFormula = evaluateTextFormulaForDisplay(state, normalized.trim(), sheet);
+    if (textFormula !== undefined) {
+      return textFormula;
     }
     const countaMatch = /^COUNTA\((.*)\)$/i.exec(normalized.trim());
     if (countaMatch) {
@@ -3320,15 +3337,29 @@ function evaluateFormulaExpression(
     AVERAGE: (args) => foldFormulaArgs(state, args, sheet, visited, (values) => values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0),
     MIN: (args) => foldFormulaArgs(state, args, sheet, visited, (values) => values.length > 0 ? Math.min(...values) : 0),
     MAX: (args) => foldFormulaArgs(state, args, sheet, visited, (values) => values.length > 0 ? Math.max(...values) : 0),
+    COUNT: (args) => countNumericFormulaArgs(state, args, sheet, visited),
     COUNTA: (args) => countFormulaArgs(state, args, sheet, visited),
     SUMPRODUCT: (args) => sumProductFormulaArgs(state, args, sheet, visited),
     IF: (args) => evaluateIfFormula(state, args, sheet, visited),
+    ABS: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.abs(value);
+    },
+    ROUND: (args) => evaluateRoundFormula(state, args, sheet, visited, "round"),
+    ROUNDUP: (args) => evaluateRoundFormula(state, args, sheet, visited, "up"),
+    ROUNDDOWN: (args) => evaluateRoundFormula(state, args, sheet, visited, "down"),
+    MOD: (args) => evaluateBinaryNumericFormula(state, args, sheet, visited, (left, right) => right === 0 ? undefined : left - right * Math.floor(left / right)),
+    POWER: (args) => evaluateBinaryNumericFormula(state, args, sheet, visited, (left, right) => Math.pow(left, right)),
+    SQRT: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined || value < 0 ? undefined : Math.sqrt(value);
+    },
   };
 
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNTA|SUMPRODUCT|IF)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|ABS|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -3431,6 +3462,101 @@ function sumProductFormulaArgs(state: ExcelWorkbookState | undefined, args: stri
     total += arrays.reduce((product, group) => product * (group[index] ?? 0), 1);
   }
   return total;
+}
+
+function countNumericFormulaArgs(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  return extractFormulaArgValues(state, args, sheet, visited).length;
+}
+
+function firstNumericFormulaArg(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  return extractFormulaArgValues(state, args, sheet, visited)[0];
+}
+
+function evaluateBinaryNumericFormula(
+  state: ExcelWorkbookState | undefined,
+  args: string,
+  sheet: ExcelSheetModel,
+  visited: Set<string>,
+  evaluator: (left: number, right: number) => number | undefined,
+) {
+  const values = splitFormulaArgs(args).map((part) => firstNumericFormulaArg(state, part, sheet, visited));
+  if (values[0] === undefined || values[1] === undefined) {
+    return undefined;
+  }
+  return evaluator(values[0], values[1]);
+}
+
+function evaluateRoundFormula(
+  state: ExcelWorkbookState | undefined,
+  args: string,
+  sheet: ExcelSheetModel,
+  visited: Set<string>,
+  mode: "round" | "up" | "down",
+) {
+  const parts = splitFormulaArgs(args);
+  const value = firstNumericFormulaArg(state, parts[0] ?? "", sheet, visited);
+  const digits = firstNumericFormulaArg(state, parts[1] ?? "0", sheet, visited) ?? 0;
+  if (value === undefined) {
+    return undefined;
+  }
+  const factor = Math.pow(10, digits);
+  if (mode === "up") {
+    return Math.ceil(Math.abs(value) * factor) / factor * Math.sign(value);
+  }
+  if (mode === "down") {
+    return Math.floor(Math.abs(value) * factor) / factor * Math.sign(value);
+  }
+  return Math.round(value * factor) / factor;
+}
+
+function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, expression: string, sheet: ExcelSheetModel) {
+  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE)\((.*)\)$/i.exec(expression);
+  if (!direct) return undefined;
+  const fn = direct[1].toUpperCase();
+  const args = splitFormulaArgs(direct[2]);
+  const resolveText = (part: string) => evaluateTextFormulaArg(state, part.trim(), sheet);
+  if (fn === "LEN") {
+    return String(resolveText(args[0] ?? "").length);
+  }
+  if (fn === "LEFT") {
+    const text = resolveText(args[0] ?? "");
+    const count = Number(firstNumericFormulaArg(state, args[1] ?? "1", sheet, new Set()) ?? 1);
+    return text.slice(0, count);
+  }
+  if (fn === "RIGHT") {
+    const text = resolveText(args[0] ?? "");
+    const count = Number(firstNumericFormulaArg(state, args[1] ?? "1", sheet, new Set()) ?? 1);
+    return count >= text.length ? text : text.slice(-count);
+  }
+  if (fn === "MID") {
+    const text = resolveText(args[0] ?? "");
+    const start = Math.max(1, Number(firstNumericFormulaArg(state, args[1] ?? "1", sheet, new Set()) ?? 1)) - 1;
+    const count = Math.max(0, Number(firstNumericFormulaArg(state, args[2] ?? "0", sheet, new Set()) ?? 0));
+    return text.substring(start, start + count);
+  }
+  if (fn === "LOWER") return resolveText(args[0] ?? "").toLowerCase();
+  if (fn === "UPPER") return resolveText(args[0] ?? "").toUpperCase();
+  if (fn === "TRIM") return resolveText(args[0] ?? "").trim().replace(/\s+/g, " ");
+  if (fn === "CONCAT" || fn === "CONCATENATE") {
+    return args.map((part) => resolveText(part)).join("");
+  }
+  return undefined;
+}
+
+function evaluateTextFormulaArg(state: ExcelWorkbookState | undefined, arg: string, sheet: ExcelSheetModel) {
+  if (/^".*"$/.test(arg)) {
+    return arg.slice(1, -1);
+  }
+  const cellMatch = /^(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+)$/i.exec(arg);
+  if (cellMatch) {
+    const targetSheetName = (cellMatch[1] ?? cellMatch[2] ?? "").trim();
+    const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+    return targetSheet?.cells[cellMatch[3].toUpperCase()]?.value ?? "";
+  }
+  if (/^[A-Z]+\d+$/i.test(arg)) {
+    return sheet.cells[arg.toUpperCase()]?.value ?? "";
+  }
+  return arg;
 }
 
 function evaluateIfFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
@@ -3670,12 +3796,47 @@ function buildAlignmentXml(props: Record<string, string>) {
   const horizontal = props["alignment.horizontal"] ?? props.halign;
   const vertical = props["alignment.vertical"] ?? props.valign;
   const wrapText = props["alignment.wrapText"] ?? props["alignment.wraptext"] ?? props.wrapText ?? props.wraptext;
+  const textRotation = props["alignment.rotation"] ?? props.rotation;
+  const indent = props["alignment.indent"] ?? props.indent;
+  const shrinkToFit = props["alignment.shrinkToFit"] ?? props["alignment.shrinktofit"] ?? props.shrinktofit;
   const attrs = [
     horizontal ? `horizontal="${escapeXml(horizontal)}"` : "",
     vertical ? `vertical="${escapeXml(vertical)}"` : "",
     wrapText !== undefined ? `wrapText="${isTruthy(wrapText) ? 1 : 0}"` : "",
+    textRotation !== undefined ? `textRotation="${Math.max(0, Math.min(180, Number(textRotation)))}"` : "",
+    indent !== undefined ? `indent="${Math.max(0, Number(indent))}"` : "",
+    shrinkToFit !== undefined ? `shrinkToFit="${isTruthy(shrinkToFit) ? 1 : 0}"` : "",
   ].filter(Boolean).join(" ");
   return attrs ? `<alignment ${attrs}/>` : "";
+}
+
+function buildBorderXml(props: Record<string, string>) {
+  const defaultXml = `<border><left/><right/><top/><bottom/><diagonal/></border>`;
+  const allStyle = props.border;
+  const allColor = props["border.color"];
+  const sideStyle = (side: "left" | "right" | "top" | "bottom" | "diagonal") => props[`border.${side}`] ?? allStyle;
+  const sideColor = (side: "left" | "right" | "top" | "bottom" | "diagonal") => props[`border.${side}.color`] ?? allColor;
+  const diagonalUp = props["border.diagonalUp"];
+  const diagonalDown = props["border.diagonalDown"];
+  const createSide = (tag: string, style?: string, color?: string) => {
+    if (!style || style.toLowerCase() === "none") return `<${tag}/>`;
+    return `<${tag} style="${escapeXml(style.toLowerCase())}">${color ? `<color rgb="${escapeXml(normalizeArgbColor(color))}"/>` : ""}</${tag}>`;
+  };
+  const xml = `<border${diagonalUp !== undefined ? ` diagonalUp="${isTruthy(diagonalUp) ? 1 : 0}"` : ""}${diagonalDown !== undefined ? ` diagonalDown="${isTruthy(diagonalDown) ? 1 : 0}"` : ""}>${createSide("left", sideStyle("left"), sideColor("left"))}${createSide("right", sideStyle("right"), sideColor("right"))}${createSide("top", sideStyle("top"), sideColor("top"))}${createSide("bottom", sideStyle("bottom"), sideColor("bottom"))}${createSide("diagonal", sideStyle("diagonal"), sideColor("diagonal"))}</border>`;
+  return xml === `<border><left/><right/><top/><bottom/><diagonal/></border>` ? defaultXml : xml;
+}
+
+function buildProtectionXml(props: Record<string, string>) {
+  const locked = props.locked;
+  const hidden = props.formulahidden;
+  if (locked === undefined && hidden === undefined) {
+    return "";
+  }
+  const attrs = [
+    locked !== undefined ? `locked="${isTruthy(locked) ? 1 : 0}"` : "",
+    hidden !== undefined ? `hidden="${isTruthy(hidden) ? 1 : 0}"` : "",
+  ].filter(Boolean).join(" ");
+  return `<protection ${attrs}/>`;
 }
 
 function isConditionalFormattingStyleKey(key: string) {

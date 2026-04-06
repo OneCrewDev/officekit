@@ -685,6 +685,109 @@ describe("officekit CLI scaffold", () => {
     expect(rawStyles.stdout).toContain('<cellXfs count="2">');
   });
 
+  test("supports richer OfficeCLI-style numeric/text formulas and style keys", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-formula-style-depth-"));
+    const filePath = path.join(dir, "formula-style-depth.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=1.234", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A2", "--prop", "value=-5", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A3", "--prop", "value=3", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A4", "--prop", "value=2", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/B1", "--prop", "value=  Hello  "]);
+    await runCli(["set", filePath, "/Sheet1/B2", "--prop", "value=World"]);
+
+    await runCli(["set", filePath, "/Sheet1/C1", "--prop", "formula==COUNT(A1:A4)"]);
+    await runCli(["set", filePath, "/Sheet1/C2", "--prop", "formula==ROUND(A1,2)"]);
+    await runCli(["set", filePath, "/Sheet1/C3", "--prop", "formula==ROUNDUP(A1,1)"]);
+    await runCli(["set", filePath, "/Sheet1/C4", "--prop", "formula==ROUNDDOWN(A1,1)"]);
+    await runCli(["set", filePath, "/Sheet1/C5", "--prop", "formula==ABS(A2)"]);
+    await runCli(["set", filePath, "/Sheet1/C6", "--prop", "formula==MOD(A3,A4)"]);
+    await runCli(["set", filePath, "/Sheet1/C7", "--prop", "formula==POWER(A4,3)"]);
+    await runCli(["set", filePath, "/Sheet1/C8", "--prop", "formula==SQRT(A3)"]);
+    await runCli(["set", filePath, "/Sheet1/C9", "--prop", "formula==LEN(B1)"]);
+    await runCli(["set", filePath, "/Sheet1/C10", "--prop", "formula==TRIM(B1)"]);
+    await runCli(["set", filePath, "/Sheet1/C11", "--prop", "formula==UPPER(B1)"]);
+    await runCli(["set", filePath, "/Sheet1/C12", "--prop", "formula==LEFT(B2,2)"]);
+    await runCli(["set", filePath, "/Sheet1/C13", "--prop", "formula==RIGHT(B2,2)"]);
+    await runCli(["set", filePath, "/Sheet1/C14", "--prop", "formula==MID(B2,2,3)"]);
+    await runCli(["set", filePath, "/Sheet1/C15", "--prop", "formula==CONCATENATE(\"Hello\",\"-\",\"OK\")"]);
+
+    await runCli([
+      "set",
+      filePath,
+      "/Sheet1/D1",
+      "--prop",
+      "value=Styled depth",
+      "--prop",
+      "font.italic=true",
+      "--prop",
+      "font.underline=double",
+      "--prop",
+      "font.strike=true",
+      "--prop",
+      "border=thin",
+      "--prop",
+      "border.color=FF0000",
+      "--prop",
+      "rotation=45",
+      "--prop",
+      "indent=2",
+      "--prop",
+      "shrinktofit=true",
+      "--prop",
+      "locked=false",
+      "--prop",
+      "formulahidden=true",
+      "--prop",
+      "wraptext=true",
+    ]);
+
+    const c1 = await runCli(["get", filePath, "/Sheet1/C1", "--json"]);
+    const c2 = await runCli(["get", filePath, "/Sheet1/C2", "--json"]);
+    const c3 = await runCli(["get", filePath, "/Sheet1/C3", "--json"]);
+    const c4 = await runCli(["get", filePath, "/Sheet1/C4", "--json"]);
+    const c5 = await runCli(["get", filePath, "/Sheet1/C5", "--json"]);
+    const c6 = await runCli(["get", filePath, "/Sheet1/C6", "--json"]);
+    const c7 = await runCli(["get", filePath, "/Sheet1/C7", "--json"]);
+    const c8 = await runCli(["get", filePath, "/Sheet1/C8", "--json"]);
+    const c9 = await runCli(["get", filePath, "/Sheet1/C9", "--json"]);
+    const c10 = await runCli(["get", filePath, "/Sheet1/C10", "--json"]);
+    const c11 = await runCli(["get", filePath, "/Sheet1/C11", "--json"]);
+    const c12 = await runCli(["get", filePath, "/Sheet1/C12", "--json"]);
+    const c13 = await runCli(["get", filePath, "/Sheet1/C13", "--json"]);
+    const c14 = await runCli(["get", filePath, "/Sheet1/C14", "--json"]);
+    const c15 = await runCli(["get", filePath, "/Sheet1/C15", "--json"]);
+    const textView = await runCli(["view", filePath, "text"]);
+    const rawStyles = await runCli(["raw", filePath, "/styles"]);
+
+    expect(c1.stdout).toContain('"evaluatedValue": "4"');
+    expect(c2.stdout).toContain('"evaluatedValue": "1.23"');
+    expect(c3.stdout).toContain('"evaluatedValue": "1.3"');
+    expect(c4.stdout).toContain('"evaluatedValue": "1.2"');
+    expect(c5.stdout).toContain('"evaluatedValue": "5"');
+    expect(c6.stdout).toContain('"evaluatedValue": "1"');
+    expect(c7.stdout).toContain('"evaluatedValue": "8"');
+    expect(c8.stdout).toContain('"evaluatedValue": "1.7320508076"');
+    expect(c9.stdout).toContain('"evaluatedValue": "9"');
+    expect(c10.stdout).toContain('"evaluatedValue": "Hello"');
+    expect(c11.stdout).toContain('"evaluatedValue": "  HELLO  "');
+    expect(c12.stdout).toContain('"evaluatedValue": "Wo"');
+    expect(c13.stdout).toContain('"evaluatedValue": "ld"');
+    expect(c14.stdout).toContain('"evaluatedValue": "orl"');
+    expect(c15.stdout).toContain('"evaluatedValue": "Hello-OK"');
+    expect(textView.stdout).toContain("[/Sheet1/row[15]] Hello-OK");
+    expect(rawStyles.stdout).toContain("<i/>");
+    expect(rawStyles.stdout).toContain('<u val="double"/>');
+    expect(rawStyles.stdout).toContain("<strike/>");
+    expect(rawStyles.stdout).toContain('<left style="thin">');
+    expect(rawStyles.stdout).toContain('rgb="FFFF0000"');
+    expect(rawStyles.stdout).toContain('textRotation="45"');
+    expect(rawStyles.stdout).toContain('indent="2"');
+    expect(rawStyles.stdout).toContain('shrinkToFit="1"');
+    expect(rawStyles.stdout).toContain('locked="0"');
+    expect(rawStyles.stdout).toContain('hidden="1"');
+  });
+
   test("supports richer chart properties beyond title and series name", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-chart-props-"));
     const filePath = path.join(dir, "chart-props.xlsx");
