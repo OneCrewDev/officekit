@@ -3282,6 +3282,10 @@ function evaluateFormulaForDisplay(state: ExcelWorkbookState | undefined, sheet:
     if (textJoin !== undefined) {
       return textJoin;
     }
+    const dateFormula = evaluateDateFormulaForDisplay(state, normalized.trim(), sheet);
+    if (dateFormula !== undefined) {
+      return dateFormula;
+    }
     const ifErrorMatch = /^IFERROR\((.+)\)$/i.exec(normalized.trim());
     if (ifErrorMatch) {
       const args = splitFormulaArgs(ifErrorMatch[1]);
@@ -4129,6 +4133,43 @@ function evaluateTextJoinFormula(state: ExcelWorkbookState | undefined, formula:
     }
   }
   return parts.join(delimiter);
+}
+
+function evaluateDateFormulaForDisplay(state: ExcelWorkbookState | undefined, formula: string, sheet: ExcelSheetModel) {
+  const dateMatch = /^(TODAY|NOW|DATE|YEAR|MONTH|DAY|HOUR|MINUTE|SECOND)\((.*)\)$/i.exec(formula);
+  if (!dateMatch) return undefined;
+  const fn = dateMatch[1].toUpperCase();
+  const args = splitFormulaArgs(dateMatch[2]);
+
+  if (fn === "TODAY") {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return String((d.getTime() / 86400000) + 25569);
+  }
+  if (fn === "NOW") {
+    return String((Date.now() / 86400000) + 25569);
+  }
+  if (fn === "DATE") {
+    const year = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0);
+    const month = Number(firstNumericFormulaArg(state, args[1] ?? "1", sheet, new Set()) ?? 1);
+    const day = Number(firstNumericFormulaArg(state, args[2] ?? "1", sheet, new Set()) ?? 1);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return undefined;
+    return String((new Date(year, month - 1, day).getTime() / 86400000) + 25569);
+  }
+  const serial = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+  if (!Number.isFinite(serial)) return undefined;
+  // Excel serial date: days since 1899-12-30 (OA epoch)
+  const msPerDay = 86400000;
+  const date = new Date(Math.round((serial - 25569) * msPerDay));
+  switch (fn) {
+    case "YEAR": return String(date.getFullYear());
+    case "MONTH": return String(date.getMonth() + 1);
+    case "DAY": return String(date.getDate());
+    case "HOUR": return String(date.getHours());
+    case "MINUTE": return String(date.getMinutes());
+    case "SECOND": return String(date.getSeconds());
+  }
+  return undefined;
 }
 
 function evaluateCondition(state: ExcelWorkbookState | undefined, condition: string, sheet: ExcelSheetModel, visited: Set<string>) {
