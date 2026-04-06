@@ -3461,6 +3461,9 @@ function evaluateFormulaExpression(
     FV: (args) => evaluateFvFormula(state, args, sheet, visited),
     PV: (args) => evaluatePvFormula(state, args, sheet, visited),
     NPER: (args) => evaluateNperFormula(state, args, sheet, visited),
+    NPV: (args) => evaluateNpvFormula(state, args, sheet, visited),
+    IPMT: (args) => evaluateIpmtFormula(state, args, sheet, visited),
+    PPMT: (args) => evaluatePpmtFormula(state, args, sheet, visited),
     STDEV: (args) => evaluateStdevVarFormula(state, args, sheet, visited, true),
     STDEVP: (args) => evaluateStdevVarFormula(state, args, sheet, visited, false),
     VAR: (args) => evaluateVarFormula(state, args, sheet, visited, true),
@@ -3486,7 +3489,7 @@ function evaluateFormulaExpression(
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|STDEV|STDEVP|VAR|VARP|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|STDEV|STDEVP|VAR|VARP|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -4093,6 +4096,42 @@ function evaluateNperFormula(state: ExcelWorkbookState | undefined, args: string
   if (rate === 0) return pmt !== 0 ? -(pv + fv) / pmt : undefined;
   const inner = (-fv * rate + pmt) / (pv * rate + pmt);
   return inner <= 0 ? undefined : Math.log(inner) / Math.log(1 + rate);
+}
+
+function evaluateNpvFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const parts = splitFormulaArgs(args);
+  const rate = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0;
+  if (rate === 0) return undefined;
+  const values = extractFormulaArgValues(state, parts.slice(1).join(","), sheet, visited);
+  let npv = 0;
+  for (let i = 0; i < values.length; i++) {
+    npv += values[i] / Math.pow(1 + rate, i + 1);
+  }
+  return npv;
+}
+
+function evaluateIpmtFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const parts = splitFormulaArgs(args);
+  const rate = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0;
+  const per = firstNumericFormulaArg(state, parts[1] ?? "0", sheet, visited) ?? 0;
+  const nper = firstNumericFormulaArg(state, parts[2] ?? "0", sheet, visited) ?? 0;
+  const pv = firstNumericFormulaArg(state, parts[3] ?? "0", sheet, visited) ?? 0;
+  if (rate === 0) return 0;
+  const pmt = rate * (pv * Math.pow(1 + rate, nper)) / (Math.pow(1 + rate, nper) - 1);
+  const fvBefore = pv * Math.pow(1 + rate, per - 1) + pmt * (Math.pow(1 + rate, per - 1) - 1) / rate;
+  return -(fvBefore * rate);
+}
+
+function evaluatePpmtFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const parts = splitFormulaArgs(args);
+  const rate = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0;
+  const per = firstNumericFormulaArg(state, parts[1] ?? "0", sheet, visited) ?? 0;
+  const nper = firstNumericFormulaArg(state, parts[2] ?? "0", sheet, visited) ?? 0;
+  const pv = firstNumericFormulaArg(state, parts[3] ?? "0", sheet, visited) ?? 0;
+  if (rate === 0) return -(pv / nper);
+  const pmt = rate * (pv * Math.pow(1 + rate, nper)) / (Math.pow(1 + rate, nper) - 1);
+  const fvBefore = pv * Math.pow(1 + rate, per - 1) + pmt * (Math.pow(1 + rate, per - 1) - 1) / rate;
+  return pmt - (-(fvBefore * rate));
 }
 
 function evaluateStdevVarFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>, isSample: boolean) {
