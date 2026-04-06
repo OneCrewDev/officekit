@@ -663,6 +663,13 @@ describe("officekit CLI scaffold", () => {
     await runCli(["set", filePath, "/Summary/B1", "--prop", "formula==IF(Sheet1!A1>4,1,0)"]);
     await runCli(["set", filePath, "/Summary/B2", "--prop", "formula==COUNTA(Sheet1!A1:A2,Summary!A1)"]);
     await runCli(["set", filePath, "/Summary/B3", "--prop", "formula==SUMPRODUCT(Sheet1!A1:A2,Summary!A1:A2)"]);
+    await runCli(["set", filePath, "/Summary/C1", "--prop", "formula==MATCH(7,Sheet1!A1:A2,0)"]);
+    await runCli(["set", filePath, "/Summary/C2", "--prop", "formula==INDEX(Sheet1!A1:A2,2)"]);
+    await runCli(["set", filePath, "/Summary/C3", "--prop", "formula==VLOOKUP(7,Sheet1!A1:B2,2,0)"]);
+    await runCli(["set", filePath, "/Summary/C4", "--prop", "formula==HLOOKUP(5,Sheet1!A1:B2,2,0)"]);
+    await runCli(["set", filePath, "/Summary/C5", "--prop", "formula==SUMIF(Sheet1!A1:A2,\">5\",Sheet1!A1:A2)"]);
+    await runCli(["set", filePath, "/Summary/C6", "--prop", "formula==COUNTIF(Sheet1!A1:A2,\">5\")"]);
+    await runCli(["set", filePath, "/Summary/C7", "--prop", "formula==AVERAGEIF(Sheet1!A1:A2,\">5\",Sheet1!A1:A2)"]);
     await runCli(["set", filePath, "/Sheet1/B1", "--prop", "value=Styled", "--prop", "font.bold=true", "--prop", "fill=00FF00", "--prop", "alignment.horizontal=center"]);
     await runCli(["set", filePath, "/Sheet1/B2", "--prop", "value=Styled too", "--prop", "font.bold=true", "--prop", "fill=00FF00", "--prop", "alignment.horizontal=center"]);
 
@@ -671,6 +678,13 @@ describe("officekit CLI scaffold", () => {
     const summaryB1 = await runCli(["get", filePath, "/Summary/B1", "--json"]);
     const summaryB2 = await runCli(["get", filePath, "/Summary/B2", "--json"]);
     const summaryB3 = await runCli(["get", filePath, "/Summary/B3", "--json"]);
+    const summaryC1 = await runCli(["get", filePath, "/Summary/C1", "--json"]);
+    const summaryC2 = await runCli(["get", filePath, "/Summary/C2", "--json"]);
+    const summaryC3 = await runCli(["get", filePath, "/Summary/C3", "--json"]);
+    const summaryC4 = await runCli(["get", filePath, "/Summary/C4", "--json"]);
+    const summaryC5 = await runCli(["get", filePath, "/Summary/C5", "--json"]);
+    const summaryC6 = await runCli(["get", filePath, "/Summary/C6", "--json"]);
+    const summaryC7 = await runCli(["get", filePath, "/Summary/C7", "--json"]);
     const textView = await runCli(["view", filePath, "text"]);
     const rawStyles = await runCli(["raw", filePath, "/styles"]);
 
@@ -679,6 +693,13 @@ describe("officekit CLI scaffold", () => {
     expect(summaryB1.stdout).toContain('"evaluatedValue": "1"');
     expect(summaryB2.stdout).toContain('"evaluatedValue": "3"');
     expect(summaryB3.stdout).toContain('"evaluatedValue": "19"');
+    expect(summaryC1.stdout).toContain('"evaluatedValue": "2"');
+    expect(summaryC2.stdout).toContain('"evaluatedValue": "7"');
+    expect(summaryC3.stdout).toContain('"evaluatedValue": "Styled too"');
+    expect(summaryC4.stdout).toContain('"evaluatedValue": "7"');
+    expect(summaryC5.stdout).toContain('"evaluatedValue": "7"');
+    expect(summaryC6.stdout).toContain('"evaluatedValue": "1"');
+    expect(summaryC7.stdout).toContain('"evaluatedValue": "7"');
     expect(textView.stdout).toContain("[/Summary/row[1]] 1\t1");
     expect(textView.stdout).toContain("[/Summary/row[2]] 2\t3");
     expect(textView.stdout).toContain("[/Summary/row[3]] 19");

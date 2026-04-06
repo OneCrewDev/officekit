@@ -3262,6 +3262,10 @@ function evaluateFormulaForDisplay(state: ExcelWorkbookState | undefined, sheet:
     if (textFormula !== undefined) {
       return textFormula;
     }
+    const lookupFormula = evaluateLookupFormulaForDisplay(state, normalized.trim(), sheet);
+    if (lookupFormula !== undefined) {
+      return lookupFormula;
+    }
     const countaMatch = /^COUNTA\((.*)\)$/i.exec(normalized.trim());
     if (countaMatch) {
       return String(countFormulaArgs(state, countaMatch[1], sheet, new Set()));
@@ -3269,6 +3273,10 @@ function evaluateFormulaForDisplay(state: ExcelWorkbookState | undefined, sheet:
     const sumProductMatch = /^SUMPRODUCT\((.*)\)$/i.exec(normalized.trim());
     if (sumProductMatch) {
       return String(sumProductFormulaArgs(state, sumProductMatch[1], sheet, new Set()));
+    }
+    const conditionalAggregation = evaluateConditionalAggregationFormula(state, normalized.trim(), sheet);
+    if (conditionalAggregation !== undefined) {
+      return conditionalAggregation;
     }
   }
   const visited = new Set<string>();
@@ -3601,6 +3609,249 @@ function evaluateInlineFormulaArg(state: ExcelWorkbookState | undefined, arg: st
   }
   const numeric = Number(arg.replace(/^"|"$/g, ""));
   return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function resolveScalarValue(state: ExcelWorkbookState | undefined, arg: string, sheet: ExcelSheetModel) {
+  const trimmed = arg.trim();
+  const crossSheetCell = /^(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+)$/i.exec(trimmed);
+  if (crossSheetCell) {
+    const targetSheetName = (crossSheetCell[1] ?? crossSheetCell[2] ?? "").trim();
+    const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+    if (!targetSheet) return undefined;
+    return formatResolvedCellValue(targetSheet.cells[crossSheetCell[3].toUpperCase()]);
+  }
+  if (/^[A-Z]+\d+$/i.test(trimmed)) {
+    return formatResolvedCellValue(sheet.cells[trimmed.toUpperCase()]);
+  }
+  if (/^".*"$/.test(trimmed)) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function resolveRangeReference(state: ExcelWorkbookState | undefined, arg: string, sheet: ExcelSheetModel) {
+  const trimmed = arg.trim();
+  const crossSheetRange = /^(?:'([^']+)'|([A-Za-z0-9_ ]+))!([A-Z]+\d+):([A-Z]+\d+)$/i.exec(trimmed);
+  if (crossSheetRange) {
+    const targetSheetName = (crossSheetRange[1] ?? crossSheetRange[2] ?? "").trim();
+    const targetSheet = state?.sheets.find((item) => item.name.toLowerCase() === targetSheetName.toLowerCase());
+    if (!targetSheet) return undefined;
+    return buildRangeMatrix(targetSheet, `${crossSheetRange[3].toUpperCase()}:${crossSheetRange[4].toUpperCase()}`);
+  }
+  if (/^[A-Z]+\d+:[A-Z]+\d+$/i.test(trimmed)) {
+    return buildRangeMatrix(sheet, trimmed.toUpperCase());
+  }
+  return undefined;
+}
+
+function buildRangeMatrix(sheet: ExcelSheetModel, range: string) {
+  const refs = expandRange(range);
+  const [startRef, endRef = startRef] = range.split(":");
+  const start = parseCellAddress(startRef);
+  const end = parseCellAddress(endRef);
+  const rows = end.row - start.row + 1;
+  const cols = columnNameToIndex(end.column) - columnNameToIndex(start.column) + 1;
+  const cells: ExcelCellModel[][] = [];
+  for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+    const row: ExcelCellModel[] = [];
+    for (let colIndex = 0; colIndex < cols; colIndex += 1) {
+      row.push(sheet.cells[refs[rowIndex * cols + colIndex]] ?? { value: "" });
+    }
+    cells.push(row);
+  }
+  return { rows, cols, cells };
+}
+
+function flattenRange(range: { cells: ExcelCellModel[][] }) {
+  return range.cells.flat();
+}
+
+function formatResolvedCellValue(cell?: ExcelCellModel) {
+  if (!cell) return "";
+  if (cell.type === "boolean") {
+    return cell.value === "1" ? "TRUE" : "FALSE";
+  }
+  return cell.value;
+}
+
+function compareFormulaValues(left: string, right: string) {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return leftNumber === rightNumber ? 0 : leftNumber < rightNumber ? -1 : 1;
+  }
+  return left === right ? 0 : left.localeCompare(right);
+}
+
+function matchesFormulaCriteria(cell: ExcelCellModel, criteria: string) {
+  const value = formatResolvedCellValue(cell);
+  const directNumber = Number(criteria);
+  if (Number.isFinite(directNumber)) {
+    return Number(value) === directNumber;
+  }
+  const operatorMatch = /^(<=|>=|<>|=|<|>)(.*)$/.exec(criteria);
+  if (!operatorMatch) {
+    return value === criteria;
+  }
+  const operand = operatorMatch[2].trim().replace(/^"|"$/g, "");
+  const leftNumber = Number(value);
+  const rightNumber = Number(operand);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    switch (operatorMatch[1]) {
+      case "<": return leftNumber < rightNumber;
+      case "<=": return leftNumber <= rightNumber;
+      case ">": return leftNumber > rightNumber;
+      case ">=": return leftNumber >= rightNumber;
+      case "<>": return leftNumber !== rightNumber;
+      default: return leftNumber === rightNumber;
+    }
+  }
+  switch (operatorMatch[1]) {
+    case "<>": return value !== operand;
+    case "=": return value === operand;
+    default: return false;
+  }
+}
+
+function evaluateLookupFormulaForDisplay(state: ExcelWorkbookState | undefined, formula: string, sheet: ExcelSheetModel) {
+  const indexMatch = /^INDEX\((.+)\)$/i.exec(formula);
+  if (indexMatch) {
+    const args = splitFormulaArgs(indexMatch[1]);
+    if (args.length < 2) return undefined;
+    const range = resolveRangeReference(state, args[0].trim(), sheet);
+    const rowIndex = Number(resolveScalarValue(state, args[1].trim(), sheet) ?? NaN);
+    const colIndex = args[2] ? Number(resolveScalarValue(state, args[2].trim(), sheet) ?? NaN) : 1;
+    if (!range || !Number.isFinite(rowIndex) || !Number.isFinite(colIndex)) return undefined;
+    const cell = range.cells[rowIndex - 1]?.[colIndex - 1];
+    return cell ? formatResolvedCellValue(cell) : undefined;
+  }
+
+  const matchMatch = /^MATCH\((.+)\)$/i.exec(formula);
+  if (matchMatch) {
+    const args = splitFormulaArgs(matchMatch[1]);
+    if (args.length < 2) return undefined;
+    const lookupValue = resolveScalarValue(state, args[0].trim(), sheet);
+    const range = resolveRangeReference(state, args[1].trim(), sheet);
+    if (lookupValue === undefined || !range) return undefined;
+    const flat = range.rows === 1
+      ? range.cells[0]
+      : range.cols === 1
+        ? range.cells.map((row) => row[0])
+        : [];
+    const index = flat.findIndex((cell) => compareFormulaValues(formatResolvedCellValue(cell), lookupValue) === 0);
+    return index >= 0 ? String(index + 1) : undefined;
+  }
+
+  const vlookupMatch = /^VLOOKUP\((.+)\)$/i.exec(formula);
+  if (vlookupMatch) {
+    const args = splitFormulaArgs(vlookupMatch[1]);
+    if (args.length < 3) return undefined;
+    const lookupValue = resolveScalarValue(state, args[0].trim(), sheet);
+    const range = resolveRangeReference(state, args[1].trim(), sheet);
+    const columnIndex = Number(resolveScalarValue(state, args[2].trim(), sheet) ?? NaN);
+    const exact = args[3] ? !isTruthy(String(resolveScalarValue(state, args[3].trim(), sheet) ?? "true")) : false;
+    if (lookupValue === undefined || !range || !Number.isFinite(columnIndex)) return undefined;
+    let foundRow = -1;
+    for (let rowIndex = 0; rowIndex < range.rows; rowIndex += 1) {
+      const firstCell = range.cells[rowIndex][0];
+      const compare = compareFormulaValues(formatResolvedCellValue(firstCell), lookupValue);
+      if (exact) {
+        if (compare === 0) {
+          foundRow = rowIndex;
+          break;
+        }
+      } else if (compare <= 0) {
+        foundRow = rowIndex;
+      } else {
+        break;
+      }
+    }
+    const cell = foundRow >= 0 ? range.cells[foundRow]?.[columnIndex - 1] : undefined;
+    return cell ? formatResolvedCellValue(cell) : undefined;
+  }
+
+  const hlookupMatch = /^HLOOKUP\((.+)\)$/i.exec(formula);
+  if (hlookupMatch) {
+    const args = splitFormulaArgs(hlookupMatch[1]);
+    if (args.length < 3) return undefined;
+    const lookupValue = resolveScalarValue(state, args[0].trim(), sheet);
+    const range = resolveRangeReference(state, args[1].trim(), sheet);
+    const rowIndex = Number(resolveScalarValue(state, args[2].trim(), sheet) ?? NaN);
+    const exact = args[3] ? !isTruthy(String(resolveScalarValue(state, args[3].trim(), sheet) ?? "true")) : false;
+    if (lookupValue === undefined || !range || !Number.isFinite(rowIndex)) return undefined;
+    let foundCol = -1;
+    for (let colIndex = 0; colIndex < range.cols; colIndex += 1) {
+      const firstCell = range.cells[0][colIndex];
+      const compare = compareFormulaValues(formatResolvedCellValue(firstCell), lookupValue);
+      if (exact) {
+        if (compare === 0) {
+          foundCol = colIndex;
+          break;
+        }
+      } else if (compare <= 0) {
+        foundCol = colIndex;
+      } else {
+        break;
+      }
+    }
+    const cell = foundCol >= 0 ? range.cells[rowIndex - 1]?.[foundCol] : undefined;
+    return cell ? formatResolvedCellValue(cell) : undefined;
+  }
+
+  return undefined;
+}
+
+function evaluateConditionalAggregationFormula(state: ExcelWorkbookState | undefined, formula: string, sheet: ExcelSheetModel) {
+  const sumIfMatch = /^SUMIF\((.+)\)$/i.exec(formula);
+  if (sumIfMatch) {
+    const args = splitFormulaArgs(sumIfMatch[1]);
+    if (args.length < 2) return undefined;
+    const criteriaRange = resolveRangeReference(state, args[0].trim(), sheet);
+    const criteria = resolveScalarValue(state, args[1].trim(), sheet);
+    const sumRange = args[2] ? resolveRangeReference(state, args[2].trim(), sheet) ?? criteriaRange : criteriaRange;
+    if (!criteriaRange || !sumRange || criteria === undefined) return undefined;
+    let total = 0;
+    for (let index = 0; index < Math.min(flattenRange(criteriaRange).length, flattenRange(sumRange).length); index += 1) {
+      if (matchesFormulaCriteria(flattenRange(criteriaRange)[index], criteria)) {
+        total += Number(formatResolvedCellValue(flattenRange(sumRange)[index]) || 0);
+      }
+    }
+    return String(total);
+  }
+
+  const countIfMatch = /^COUNTIF\((.+)\)$/i.exec(formula);
+  if (countIfMatch) {
+    const args = splitFormulaArgs(countIfMatch[1]);
+    if (args.length < 2) return undefined;
+    const criteriaRange = resolveRangeReference(state, args[0].trim(), sheet);
+    const criteria = resolveScalarValue(state, args[1].trim(), sheet);
+    if (!criteriaRange || criteria === undefined) return undefined;
+    const count = flattenRange(criteriaRange).filter((cell) => matchesFormulaCriteria(cell, criteria)).length;
+    return String(count);
+  }
+
+  const averageIfMatch = /^AVERAGEIF\((.+)\)$/i.exec(formula);
+  if (averageIfMatch) {
+    const args = splitFormulaArgs(averageIfMatch[1]);
+    if (args.length < 2) return undefined;
+    const criteriaRange = resolveRangeReference(state, args[0].trim(), sheet);
+    const criteria = resolveScalarValue(state, args[1].trim(), sheet);
+    const averageRange = args[2] ? resolveRangeReference(state, args[2].trim(), sheet) ?? criteriaRange : criteriaRange;
+    if (!criteriaRange || !averageRange || criteria === undefined) return undefined;
+    const values: number[] = [];
+    const criteriaCells = flattenRange(criteriaRange);
+    const averageCells = flattenRange(averageRange);
+    for (let index = 0; index < Math.min(criteriaCells.length, averageCells.length); index += 1) {
+      if (matchesFormulaCriteria(criteriaCells[index], criteria)) {
+        const numeric = Number(formatResolvedCellValue(averageCells[index]));
+        if (Number.isFinite(numeric)) values.push(numeric);
+      }
+    }
+    if (values.length === 0) return undefined;
+    return String(values.reduce((sum, value) => sum + value, 0) / values.length);
+  }
+
+  return undefined;
 }
 
 function evaluateCondition(state: ExcelWorkbookState | undefined, condition: string, sheet: ExcelSheetModel, visited: Set<string>) {
