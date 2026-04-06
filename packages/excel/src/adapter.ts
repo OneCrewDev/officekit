@@ -3486,12 +3486,115 @@ function evaluateFormulaExpression(
     MODE: (args) => evaluateModeFormula(state, args, sheet, visited),
     LARGE: (args) => evaluateLargeSmallFormula(state, args, sheet, visited, true),
     SMALL: (args) => evaluateLargeSmallFormula(state, args, sheet, visited, false),
+    SIN: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.sin(value);
+    },
+    COS: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.cos(value);
+    },
+    TAN: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.tan(value);
+    },
+    ASIN: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : (value < -1 || value > 1 ? undefined : Math.asin(value));
+    },
+    ACOS: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : (value < -1 || value > 1 ? undefined : Math.acos(value));
+    },
+    ATAN: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.atan(value);
+    },
+    ATAN2: (args) => {
+      const parts = splitFormulaArgs(args);
+      const y = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0;
+      const x = firstNumericFormulaArg(state, parts[1] ?? "0", sheet, visited) ?? 0;
+      return Math.atan2(y, x);
+    },
+    SINH: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.sinh(value);
+    },
+    COSH: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.cosh(value);
+    },
+    TANH: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.tanh(value);
+    },
+    DEGREES: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : value * 180 / Math.PI;
+    },
+    RADIANS: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : value * Math.PI / 180;
+    },
+    FACT: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      if (value === undefined || value < 0 || !Number.isInteger(value)) return undefined;
+      let result = 1;
+      for (let i = 2; i <= value; i++) result *= i;
+      return result;
+    },
+    COMBIN: (args) => {
+      const parts = splitFormulaArgs(args);
+      const n = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0;
+      const k = firstNumericFormulaArg(state, parts[1] ?? "0", sheet, visited) ?? 0;
+      if (n < 0 || k < 0 || !Number.isInteger(n) || !Number.isInteger(k) || k > n) return undefined;
+      return factorial(n) / (factorial(k) * factorial(n - k));
+    },
+    PERMUT: (args) => {
+      const parts = splitFormulaArgs(args);
+      const n = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0;
+      const k = firstNumericFormulaArg(state, parts[1] ?? "0", sheet, visited) ?? 0;
+      if (n < 0 || k < 0 || !Number.isInteger(n) || !Number.isInteger(k) || k > n) return undefined;
+      return factorial(n) / factorial(n - k);
+    },
+    GCD: (args) => {
+      const values = extractFormulaArgValues(state, args, sheet, visited);
+      if (values.length === 0) return undefined;
+      return values.reduce((a, b) => gcd(Math.abs(a), Math.abs(b)));
+    },
+    LCM: (args) => {
+      const values = extractFormulaArgValues(state, args, sheet, visited);
+      if (values.length === 0) return undefined;
+      return values.reduce((a, b) => lcm(Math.abs(a), Math.abs(b)));
+    },
+    EVEN: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      if (value === undefined) return undefined;
+      const rounded = Math.abs(value) === Math.floor(Math.abs(value)) ? value : Math.ceil(Math.abs(value));
+      return value >= 0 ? rounded : -rounded;
+    },
+    ODD: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      if (value === undefined) return undefined;
+      const absVal = Math.abs(value);
+      const floorAbs = Math.floor(absVal);
+      const isOdd = floorAbs % 2 === 1;
+      const rounded = isOdd ? floorAbs : floorAbs + 1;
+      return value >= 0 ? rounded : -rounded;
+    },
+    MROUND: (args) => {
+      const parts = splitFormulaArgs(args);
+      const num = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited);
+      const mult = firstNumericFormulaArg(state, parts[1] ?? "1", sheet, visited);
+      if (num === undefined || mult === undefined || mult === 0) return undefined;
+      return Math.round(num / mult) * mult;
+    },
   };
 
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|STDEV|STDEVP|VAR|VARP|RANK|PERCENTILE|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|STDEV|STDEVP|VAR|VARP|RANK|PERCENTILE|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE|SIN|COS|TAN|ASIN|ACOS|ATAN|ATAN2|SINH|COSH|TANH|DEGREES|RADIANS|FACT|COMBIN|PERMUT|GCD|LCM|EVEN|ODD|MROUND)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -4076,6 +4179,29 @@ function evaluatePvFormula(state: ExcelWorkbookState | undefined, args: string, 
   const fv = parts[3] !== undefined ? (firstNumericFormulaArg(state, parts[3], sheet, visited) ?? 0) : 0;
   if (rate === 0) return -(fv + pmt * nper);
   return -(fv / Math.pow(1 + rate, nper) + pmt * (1 - Math.pow(1 + rate, -nper)) / rate);
+}
+
+function factorial(n: number): number {
+  if (n < 0 || !Number.isInteger(n)) return NaN;
+  let result = 1;
+  for (let i = 2; i <= n; i++) result *= i;
+  return result;
+}
+
+function gcd(a: number, b: number): number {
+  a = Math.abs(Math.floor(a));
+  b = Math.abs(Math.floor(b));
+  while (b !== 0) {
+    const temp = b;
+    b = a % b;
+    a = temp;
+  }
+  return a;
+}
+
+function lcm(a: number, b: number): number {
+  if (a === 0 || b === 0) return 0;
+  return Math.abs(a * b) / gcd(a, b);
 }
 
 function evaluateIfsFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
