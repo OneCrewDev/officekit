@@ -3388,6 +3388,27 @@ function evaluateFormulaExpression(
       const value = firstNumericFormulaArg(state, args, sheet, visited);
       return value === undefined || value < 0 ? undefined : Math.sqrt(value);
     },
+    PRODUCT: (args) => {
+      const values = extractFormulaArgValues(state, args, sheet, visited);
+      return values.reduce((acc, v) => acc * v, 1);
+    },
+    QUOTIENT: (args) => {
+      const parts = splitFormulaArgs(args);
+      const num = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0;
+      const denom = firstNumericFormulaArg(state, parts[1] ?? "1", sheet, visited) ?? 1;
+      return denom === 0 ? undefined : Math.trunc(num / denom);
+    },
+    COUNTBLANK: (args) => {
+      const range = resolveRangeReference(state, args.trim(), sheet);
+      if (!range) return 0;
+      let count = 0;
+      for (const row of range.cells) {
+        for (const cell of row) {
+          if (!cell || (cell.value === "" && !cell.formula)) count++;
+        }
+      }
+      return count;
+    },
     INT: (args) => {
       const value = firstNumericFormulaArg(state, args, sheet, visited);
       return value === undefined ? undefined : Math.floor(value);
@@ -3454,7 +3475,7 @@ function evaluateFormulaExpression(
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|PRODUCT|QUOTIENT|COUNTBLANK)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
