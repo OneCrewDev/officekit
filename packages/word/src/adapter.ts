@@ -1052,6 +1052,18 @@ function escapeXml(str: string): string {
 }
 
 /**
+ * Helper: Escape HTML special characters
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
  * Helper: Sanitize hex color
  */
 function sanitizeHex(color: string): string {
