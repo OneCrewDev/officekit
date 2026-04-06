@@ -114,6 +114,14 @@ export interface ExcelSheetModel {
   showGridLines?: boolean;
   showHeadings?: boolean;
   tabColor?: string;
+  header?: string;
+  footer?: string;
+  orientation?: string;
+  paperSize?: number;
+  fitToPage?: string;
+  protection?: boolean;
+  rowBreaks?: number[];
+  colBreaks?: number[];
 }
 
 interface RelationshipEntry {
@@ -133,6 +141,30 @@ interface ExcelWorkbookState {
   namedRanges: ExcelNamedRangeModel[];
   styleSheetXml?: string;
   metadata: Record<string, string>;
+  officekitMetadata?: {
+    excel?: {
+      sheets?: Array<{
+        name: string;
+        cells?: Record<string, ExcelCellModel>;
+        autoFilter?: string;
+        freezeTopLeftCell?: string;
+        zoom?: number;
+        showGridLines?: boolean;
+        showHeadings?: boolean;
+        tabColor?: string;
+        header?: string;
+        footer?: string;
+        orientation?: string;
+        paperSize?: number;
+        fitToPage?: string;
+        protection?: boolean;
+        rowBreaks?: number[];
+        colBreaks?: number[];
+      }>;
+      namedRanges?: ExcelNamedRangeModel[];
+      settings?: ExcelWorkbookSettings;
+    };
+  };
 }
 
 const METADATA_PATH = "officekit/document.json";
@@ -587,6 +619,7 @@ async function loadWorkbookState(filePath: string): Promise<ExcelWorkbookState> 
   const workbookRelsXml = requireEntry(zip, workbookRelsEntryName);
   const relationships = parseRelationshipEntries(workbookRelsXml);
   const settings = parseWorkbookSettings(workbookXml);
+  const officekitMetadata = parseOfficekitMetadata(zip);
   const namedRanges = parseDefinedNames(workbookXml, []);
   const sheets = [...workbookXml.matchAll(/<(?:\w+:)?sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*\/?>/g)].map((match) => {
     const name = decodeXml(match[1]);
@@ -598,17 +631,33 @@ async function loadWorkbookState(filePath: string): Promise<ExcelWorkbookState> 
     const entryName = normalizeZipPath("xl", target);
     const xml = requireEntry(zip, entryName);
     const features = parseSheetFeatures(xml);
+    const metadataSheet = officekitMetadata?.excel?.sheets?.find((item) => item.name.toLowerCase() === name.toLowerCase());
+    const parsedCells = parseSheetCells(xml, zip);
     return {
       name,
       relId,
       relationshipTarget: target,
       entryName,
       xml,
-      cells: parseSheetCells(xml, zip),
+      cells: overlayMetadataCells(parsedCells, metadataSheet?.cells),
       ...features,
+      ...(metadataSheet?.autoFilter ? { autoFilter: metadataSheet.autoFilter } : {}),
+      ...(metadataSheet?.freezeTopLeftCell ? { freezeTopLeftCell: metadataSheet.freezeTopLeftCell } : {}),
+      ...(metadataSheet?.zoom !== undefined ? { zoom: metadataSheet.zoom } : {}),
+      ...(metadataSheet?.showGridLines !== undefined ? { showGridLines: metadataSheet.showGridLines } : {}),
+      ...(metadataSheet?.showHeadings !== undefined ? { showHeadings: metadataSheet.showHeadings } : {}),
+      ...(metadataSheet?.tabColor ? { tabColor: metadataSheet.tabColor } : {}),
+      ...(metadataSheet?.header ? { header: metadataSheet.header } : {}),
+      ...(metadataSheet?.footer ? { footer: metadataSheet.footer } : {}),
+      ...(metadataSheet?.orientation ? { orientation: metadataSheet.orientation } : {}),
+      ...(metadataSheet?.paperSize !== undefined ? { paperSize: metadataSheet.paperSize } : {}),
+      ...(metadataSheet?.fitToPage ? { fitToPage: metadataSheet.fitToPage } : {}),
+      ...(metadataSheet?.protection !== undefined ? { protection: metadataSheet.protection } : {}),
+      ...(metadataSheet?.rowBreaks?.length ? { rowBreaks: [...metadataSheet.rowBreaks] } : {}),
+      ...(metadataSheet?.colBreaks?.length ? { colBreaks: [...metadataSheet.colBreaks] } : {}),
     } satisfies ExcelSheetModel;
   });
-  const scopedNamedRanges = parseDefinedNames(workbookXml, sheets);
+  const scopedNamedRanges = officekitMetadata?.excel?.namedRanges ?? parseDefinedNames(workbookXml, sheets);
   return {
     zip,
     workbookXml,
@@ -616,10 +665,11 @@ async function loadWorkbookState(filePath: string): Promise<ExcelWorkbookState> 
     workbookRelsXml,
     workbookRelsEntryName,
     sheets,
-    settings,
+    settings: officekitMetadata?.excel?.settings ?? settings,
     namedRanges: scopedNamedRanges,
     styleSheetXml: zip.get("xl/styles.xml")?.toString("utf8"),
     metadata: parsePackageProperties(zip),
+    officekitMetadata,
   };
 }
 
@@ -774,6 +824,14 @@ function materializeWorkbookRoot(state: ExcelWorkbookState) {
       ...(sheet.showGridLines !== undefined ? { showGridLines: sheet.showGridLines } : {}),
       ...(sheet.showHeadings !== undefined ? { showHeadings: sheet.showHeadings } : {}),
       ...(sheet.tabColor ? { tabColor: sheet.tabColor } : {}),
+      ...(sheet.header ? { header: sheet.header } : {}),
+      ...(sheet.footer ? { footer: sheet.footer } : {}),
+      ...(sheet.orientation ? { orientation: sheet.orientation } : {}),
+      ...(sheet.paperSize !== undefined ? { paperSize: sheet.paperSize } : {}),
+      ...(sheet.fitToPage ? { fitToPage: sheet.fitToPage } : {}),
+      ...(sheet.protection !== undefined ? { protection: sheet.protection } : {}),
+      ...(sheet.rowBreaks?.length ? { rowBreaks: sheet.rowBreaks } : {}),
+      ...(sheet.colBreaks?.length ? { colBreaks: sheet.colBreaks } : {}),
     })),
     ...(Object.keys(state.settings).length > 0 ? { settings: state.settings } : {}),
     ...(state.styleSheetXml ? { styleSheetXml: state.styleSheetXml } : {}),
@@ -795,6 +853,14 @@ function materializeSheetNode(state: ExcelWorkbookState, targetPath: string) {
     ...(sheet.showGridLines !== undefined ? { showGridLines: sheet.showGridLines } : {}),
     ...(sheet.showHeadings !== undefined ? { showHeadings: sheet.showHeadings } : {}),
     ...(sheet.tabColor ? { tabColor: sheet.tabColor } : {}),
+    ...(sheet.header ? { header: sheet.header } : {}),
+    ...(sheet.footer ? { footer: sheet.footer } : {}),
+    ...(sheet.orientation ? { orientation: sheet.orientation } : {}),
+    ...(sheet.paperSize !== undefined ? { paperSize: sheet.paperSize } : {}),
+    ...(sheet.fitToPage ? { fitToPage: sheet.fitToPage } : {}),
+    ...(sheet.protection !== undefined ? { protection: sheet.protection } : {}),
+    ...(sheet.rowBreaks?.length ? { rowBreaks: sheet.rowBreaks } : {}),
+    ...(sheet.colBreaks?.length ? { colBreaks: sheet.colBreaks } : {}),
   };
 }
 
@@ -884,6 +950,14 @@ function updateSheetXml(sheet: ExcelSheetModel) {
     showGridLines: sheet.showGridLines,
     showHeadings: sheet.showHeadings,
     tabColor: sheet.tabColor,
+    header: sheet.header,
+    footer: sheet.footer,
+    orientation: sheet.orientation,
+    paperSize: sheet.paperSize,
+    fitToPage: sheet.fitToPage,
+    protection: sheet.protection,
+    rowBreaks: sheet.rowBreaks,
+    colBreaks: sheet.colBreaks,
   });
   sheet.xml = mergeSheetXmlPreservingExtras(sheet.xml, nextXml);
 }
@@ -896,6 +970,14 @@ function buildSheetXml(sheet: {
   showGridLines?: boolean;
   showHeadings?: boolean;
   tabColor?: string;
+  header?: string;
+  footer?: string;
+  orientation?: string;
+  paperSize?: number;
+  fitToPage?: string;
+  protection?: boolean;
+  rowBreaks?: number[];
+  colBreaks?: number[];
 }) {
   const entries = Object.entries(sheet.cells).sort(([a], [b]) => compareCellRefs(a, b));
   const rows = new Map<number, string[]>();
@@ -919,12 +1001,38 @@ function buildSheetXml(sheet: {
     : "";
   const sheetPr = sheet.tabColor ? `<sheetPr><tabColor rgb="${escapeXml(normalizeArgbColor(sheet.tabColor))}"/></sheetPr>` : "";
   const autoFilter = sheet.autoFilter ? `<autoFilter ref="${escapeXml(sheet.autoFilter)}"/>` : "";
+  const pageSetupAttrs = [
+    sheet.orientation ? `orientation="${escapeXml(sheet.orientation)}"` : "",
+    sheet.paperSize !== undefined ? `paperSize="${sheet.paperSize}"` : "",
+    ...(sheet.fitToPage
+      ? (() => {
+          const [width, height] = sheet.fitToPage.split("x");
+          return [`fitToWidth="${width}"`, `fitToHeight="${height ?? "1"}"`];
+        })()
+      : []),
+  ].filter(Boolean).join(" ");
+  const pageSetup = pageSetupAttrs ? `<pageSetup ${pageSetupAttrs}/>` : "";
+  const headerFooter = sheet.header || sheet.footer
+    ? `<headerFooter>${sheet.header ? `<oddHeader>${escapeXml(sheet.header)}</oddHeader>` : ""}${sheet.footer ? `<oddFooter>${escapeXml(sheet.footer)}</oddFooter>` : ""}</headerFooter>`
+    : "";
+  const sheetProtection = sheet.protection ? `<sheetProtection sheet="1"/>` : "";
+  const rowBreaks = sheet.rowBreaks?.length
+    ? `<rowBreaks count="${sheet.rowBreaks.length}" manualBreakCount="${sheet.rowBreaks.length}">${sheet.rowBreaks.map((row) => `<brk id="${row}" man="1"/>`).join("")}</rowBreaks>`
+    : "";
+  const colBreaks = sheet.colBreaks?.length
+    ? `<colBreaks count="${sheet.colBreaks.length}" manualBreakCount="${sheet.colBreaks.length}">${sheet.colBreaks.map((col) => `<brk id="${col}" man="1"/>`).join("")}</colBreaks>`
+    : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   ${sheetPr}
   ${sheetViews}
   <sheetData>${xmlRows}</sheetData>
   ${autoFilter}
+  ${sheetProtection}
+  ${pageSetup}
+  ${headerFooter}
+  ${rowBreaks}
+  ${colBreaks}
 </worksheet>`;
 }
 
@@ -1086,7 +1194,7 @@ function renderIssuesView(state: ExcelWorkbookState) {
       }
     }
   }
-  return issues.length > 0 ? issues.join("\n") : "No structural Excel issues detected.";
+  return issues.length > 0 ? issues.join("\n") : "No issues found.";
 }
 
 function renderHtmlView(state: ExcelWorkbookState) {
@@ -1107,10 +1215,34 @@ function applySheetProperties(sheet: ExcelSheetModel, props: Record<string, stri
     sheet.showHeadings = isTruthy(props.headings);
   }
   if (props.tabColor !== undefined || props.tabcolor !== undefined) {
-    sheet.tabColor = props.tabColor ?? props.tabcolor;
+    sheet.tabColor = normalizeArgbColor(props.tabColor ?? props.tabcolor ?? "");
   }
-  if (props.autofilter !== undefined) {
-    sheet.autoFilter = props.autofilter;
+  if (props.autoFilter !== undefined || props.autofilter !== undefined) {
+    sheet.autoFilter = props.autoFilter ?? props.autofilter;
+  }
+  if (props.orientation !== undefined) {
+    sheet.orientation = props.orientation.toLowerCase();
+  }
+  if (props.paperSize !== undefined || props.papersize !== undefined) {
+    sheet.paperSize = Number(props.paperSize ?? props.papersize);
+  }
+  if (props.fitToPage !== undefined || props.fittopage !== undefined) {
+    sheet.fitToPage = props.fitToPage ?? props.fittopage;
+  }
+  if (props.header !== undefined) {
+    sheet.header = props.header;
+  }
+  if (props.footer !== undefined) {
+    sheet.footer = props.footer;
+  }
+  if (props.protect !== undefined || props.protection !== undefined) {
+    sheet.protection = isTruthy(props.protect ?? props.protection ?? "false");
+  }
+  if (props.rowBreaks !== undefined || props.rowbreaks !== undefined) {
+    sheet.rowBreaks = parseBreakList(props.rowBreaks ?? props.rowbreaks ?? "");
+  }
+  if (props.colBreaks !== undefined || props.colbreaks !== undefined) {
+    sheet.colBreaks = parseBreakList(props.colBreaks ?? props.colbreaks ?? "");
   }
   updateSheetXml(sheet);
 }
@@ -1288,7 +1420,7 @@ function parseSheetFeatures(xml: string) {
     ...(zoom ? { zoom: Number(zoom) } : {}),
     ...(showGridLines !== undefined ? { showGridLines: isTruthy(showGridLines) } : {}),
     ...(showHeadings !== undefined ? { showHeadings: isTruthy(showHeadings) } : {}),
-    ...(tabColor ? { tabColor: stripAlpha(tabColor) } : {}),
+    ...(tabColor ? { tabColor } : {}),
   };
 }
 
@@ -1511,6 +1643,36 @@ function parsePackageProperties(zip: Map<string, Buffer>) {
     ...(extractTagText(core, "dc:subject") ? { subject: extractTagText(core, "dc:subject")! } : {}),
     ...(extractTagText(core, "dc:description") ? { description: extractTagText(core, "dc:description")! } : {}),
   };
+}
+
+function parseOfficekitMetadata(zip: Map<string, Buffer>) {
+  const metadata = zip.get(METADATA_PATH)?.toString("utf8");
+  if (!metadata) return undefined;
+  try {
+    return JSON.parse(metadata) as ExcelWorkbookState["officekitMetadata"];
+  } catch {
+    return undefined;
+  }
+}
+
+function overlayMetadataCells(
+  parsedCells: Record<string, ExcelCellModel>,
+  metadataCells?: Record<string, ExcelCellModel>,
+) {
+  if (!metadataCells) return parsedCells;
+  const next: Record<string, ExcelCellModel> = {};
+  for (const [ref, cell] of Object.entries(parsedCells)) {
+    next[ref] = {
+      ...cell,
+      ...(metadataCells[ref]?.type ? { type: metadataCells[ref].type } : {}),
+    };
+  }
+  for (const [ref, cell] of Object.entries(metadataCells)) {
+    if (!next[ref]) {
+      next[ref] = cell;
+    }
+  }
+  return next;
 }
 
 function renderExcelCellXml(ref: string, cell: ExcelCellModel) {
@@ -1901,10 +2063,6 @@ function normalizeRefMode(value: string) {
 function normalizeArgbColor(value: string) {
   const normalized = value.replace(/^#/, "").toUpperCase();
   return normalized.length === 6 ? `FF${normalized}` : normalized;
-}
-
-function stripAlpha(value: string) {
-  return value.length === 8 ? value.slice(2) : value;
 }
 
 function isTruthy(value: string) {
