@@ -3608,12 +3608,18 @@ function evaluateFormulaExpression(
     MODE_SNGL: (args) => evaluateModeFormula(state, args, sheet, visited),
     RANK_EQ: (args) => evaluateRankFormula(state, args, sheet, visited),
     PERCENTILE_INC: (args) => evaluatePercentileFormula(state, args, sheet, visited),
+    BIN2DEC: (args) => { const parts = splitFormulaArgs(args); const val = parts[0]?.replace(/"/g, "") ?? ""; const n = parseInt(val, 2); return Number.isFinite(n) ? n : undefined; },
+    HEX2DEC: (args) => { const parts = splitFormulaArgs(args); const val = parts[0]?.replace(/"/g, "") ?? ""; const n = parseInt(val, 16); return Number.isFinite(n) ? n : undefined; },
+    OCT2DEC: (args) => { const parts = splitFormulaArgs(args); const val = parts[0]?.replace(/"/g, "") ?? ""; const n = parseInt(val, 8); return Number.isFinite(n) ? n : undefined; },
+    SWITCH: (args) => evaluateSwitchFormula(state, args, sheet, visited),
+    ROMAN: (args) => { const num = Math.round(firstNumericFormulaArg(state, args, sheet, visited) ?? 0); if (num < 0 || num > 3999) return undefined; const thousands = ['','M','MM','MMM']; const hundreds = ['','C','CC','CCC','CD','D','DC','DCC','DCCC','CM']; const tens = ['','X','XX','XXX','XL','L','LX','LXX','LXXX','XC']; const ones = ['','I','II','III','IV','V','VI','VII','VIII','IX']; return thousands[Math.floor(num/1000)] + hundreds[Math.floor((num%1000)/100)] + tens[Math.floor((num%100)/10)] + ones[num%10]; },
+    ARABIC: (args) => { const s = splitFormulaArgs(args)[0]?.replace(/"/g, "") ?? ""; const vals = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}; let result = 0; let prev = 0; for (let i = s.length - 1; i >= 0; i--) { const v = vals[s[i].toUpperCase()] || 0; result += v >= prev ? v : -v; prev = v; } return result; },
   };
 
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|GEOMEAN|HARMEAN|PERCENTRANK|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ISLOGICAL|ISNONTEXT|TYPE|NA|ERROR_TYPE|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|SLN|SYD|DB|DDB|STDEV|STDEVP|VAR|VARP|STDEV_S|STDEV_P|VAR_S|VAR_P|RANK|PERCENTILE|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE|SIN|COS|TAN|ASIN|ACOS|ATAN|ATAN2|SINH|COSH|TANH|DEGREES|RADIANS|FACT|COMBIN|PERMUT|GCD|LCM|EVEN|ODD|MROUND|MODE_SNGL|RANK_EQ|PERCENTILE_INC)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|GEOMEAN|HARMEAN|PERCENTRANK|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ISLOGICAL|ISNONTEXT|TYPE|NA|ERROR_TYPE|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|SLN|SYD|DB|DDB|STDEV|STDEVP|VAR|VARP|STDEV_S|STDEV_P|VAR_S|VAR_P|RANK|PERCENTILE|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE|SIN|COS|TAN|ASIN|ACOS|ATAN|ATAN2|SINH|COSH|TANH|DEGREES|RADIANS|FACT|COMBIN|PERMUT|GCD|LCM|EVEN|ODD|MROUND|MODE_SNGL|RANK_EQ|PERCENTILE_INC|BIN2DEC|HEX2DEC|OCT2DEC|SWITCH)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -3764,7 +3770,7 @@ function evaluateRoundFormula(
 }
 
 function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, expression: string, sheet: ExcelSheetModel) {
-  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT|PROPER|CLEAN|REPT|CHAR|CODE|TEXT|FIXED|NUMBERVALUE|DOLLAR|YEN|T|N)\((.*)\)$/i.exec(expression);
+  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT|PROPER|CLEAN|REPT|CHAR|CODE|TEXT|FIXED|NUMBERVALUE|DOLLAR|YEN|T|N|DEC2BIN|DEC2HEX|DEC2OCT|BIN2HEX|BIN2OCT|HEX2BIN|HEX2OCT|OCT2BIN|OCT2HEX|SWITCH)\((.*)\)$/i.exec(expression);
   if (!direct) return undefined;
   const fn = direct[1].toUpperCase();
   const args = splitFormulaArgs(direct[2]);
@@ -3889,6 +3895,15 @@ function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, ex
     const val = firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set());
     return val ?? 0;
   }
+  if (fn === "DEC2BIN") { const n = Math.round(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0); const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(2); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "DEC2HEX") { const n = Math.round(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0); const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(16).toUpperCase(); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "DEC2OCT") { const n = Math.round(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0); const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(8); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "BIN2HEX") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 2); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(16).toUpperCase(); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "BIN2OCT") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 2); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(8); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "HEX2BIN") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 16); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(2); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "HEX2OCT") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 16); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(8); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "OCT2BIN") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 8); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(2); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "OCT2HEX") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 8); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(16).toUpperCase(); if (places > 0) s = s.padStart(places, '0'); return s; }
   return undefined;
 }
 
@@ -3921,6 +3936,17 @@ function evaluateIfFormula(state: ExcelWorkbookState | undefined, args: string, 
   } catch {
     return undefined;
   }
+}
+
+function evaluateSwitchFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const parts = splitFormulaArgs(args);
+  if (parts.length < 2) return undefined;
+  const val = evaluateInlineFormulaArg(state, parts[0].trim(), sheet, visited);
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    const cv = evaluateInlineFormulaArg(state, parts[i].trim(), sheet, visited);
+    if (val !== undefined && cv !== undefined && val === cv) return evaluateInlineFormulaArg(state, parts[i + 1].trim(), sheet, visited);
+  }
+  return parts.length % 2 === 0 ? evaluateInlineFormulaArg(state, parts[parts.length - 1].trim(), sheet, visited) : undefined;
 }
 
 function replaceFormulaRefsWithValues(
