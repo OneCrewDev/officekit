@@ -3913,6 +3913,68 @@ function evaluateConditionalAggregationFormula(state: ExcelWorkbookState | undef
     return String(values.reduce((sum, value) => sum + value, 0) / values.length);
   }
 
+  const maxIfsMatch = /^MAXIFS\((.+)\)$/i.exec(formula);
+  if (maxIfsMatch) {
+    const args = splitFormulaArgs(maxIfsMatch[1]);
+    if (args.length < 3) return undefined;
+    const maxRange = resolveRangeReference(state, args[0].trim(), sheet);
+    if (!maxRange) return undefined;
+    const maxCells = flattenRange(maxRange);
+    const values: number[] = [];
+    for (let index = 0; index < maxCells.length; index += 1) {
+      let matched = true;
+      for (let cursor = 1; cursor + 1 < args.length; cursor += 2) {
+        const criteriaRange = resolveRangeReference(state, args[cursor].trim(), sheet);
+        const criteria = resolveScalarValue(state, args[cursor + 1].trim(), sheet);
+        if (!criteriaRange || criteria === undefined) {
+          matched = false;
+          break;
+        }
+        if (!matchesFormulaCriteria(flattenRange(criteriaRange)[index] ?? { value: "" }, criteria)) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) {
+        const numeric = Number(formatResolvedCellValue(maxCells[index]));
+        if (Number.isFinite(numeric)) values.push(numeric);
+      }
+    }
+    if (values.length === 0) return "0";
+    return String(Math.max(...values));
+  }
+
+  const minIfsMatch = /^MINIFS\((.+)\)$/i.exec(formula);
+  if (minIfsMatch) {
+    const args = splitFormulaArgs(minIfsMatch[1]);
+    if (args.length < 3) return undefined;
+    const minRange = resolveRangeReference(state, args[0].trim(), sheet);
+    if (!minRange) return undefined;
+    const minCells = flattenRange(minRange);
+    const values: number[] = [];
+    for (let index = 0; index < minCells.length; index += 1) {
+      let matched = true;
+      for (let cursor = 1; cursor + 1 < args.length; cursor += 2) {
+        const criteriaRange = resolveRangeReference(state, args[cursor].trim(), sheet);
+        const criteria = resolveScalarValue(state, args[cursor + 1].trim(), sheet);
+        if (!criteriaRange || criteria === undefined) {
+          matched = false;
+          break;
+        }
+        if (!matchesFormulaCriteria(flattenRange(criteriaRange)[index] ?? { value: "" }, criteria)) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) {
+        const numeric = Number(formatResolvedCellValue(minCells[index]));
+        if (Number.isFinite(numeric)) values.push(numeric);
+      }
+    }
+    if (values.length === 0) return "0";
+    return String(Math.min(...values));
+  }
+
   const sumIfsMatch = /^SUMIFS\((.+)\)$/i.exec(formula);
   if (sumIfsMatch) {
     const args = splitFormulaArgs(sumIfsMatch[1]);
