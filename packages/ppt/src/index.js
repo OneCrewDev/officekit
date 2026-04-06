@@ -87,3 +87,6 @@ export * from "./models-3d.js";
 // MCP Server for AI assistant integration
 export * from "./mcp-server.js";
 export * from "./mcp-tools.js";
+
+// Equation operations (addEquation, getEquations, setEquation, removeEquation)
+export * from "./equations.js";
