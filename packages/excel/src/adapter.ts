@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { OfficekitError, UsageError } from "../../core/src/errors.js";
 import { createStoredZip, readStoredZip } from "../../core/src/zip.js";
+import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
+import xpath from "xpath";
 
 export interface ExcelCommandOptions {
   type?: string;
@@ -893,13 +895,14 @@ export async function moveExcelNode(
   options?: { index?: number },
 ): Promise<ExcelMoveResult> {
   const state = await loadWorkbookState(filePath);
-  const segments = sourcePath.trimStart("/").split("/", 2);
+  const segments = sourcePath.replace(/^\/+/, "").split("/", 2);
   const sheetName = segments[0];
   const sheet = ensureSheetState(state, sheetName);
 
   if (segments.length < 2) {
     // Moving/reordering the sheet itself
-    const targetIndex = options?.index ?? throwUsage("index is required when moving a sheet");
+    if (options?.index === undefined) throw new UsageError("index is required when moving a sheet");
+    const targetIndex = options.index;
     const workbookSheetIdx = state.sheets.findIndex(
       (s) => s.name.toLowerCase() === sheetName.toLowerCase(),
     );
@@ -945,7 +948,7 @@ export async function moveExcelNode(
   let targetSheet = sheet;
   let effectiveTargetParentPath = `/${sheetName}`;
   if (targetParentPath && targetParentPath !== `/${sheetName}`) {
-    const tgtSegments = targetParentPath.trimStart("/").split("/", 2);
+    const tgtSegments = targetParentPath.replace(/^\/+/, "").split("/", 2);
     targetSheet = ensureSheetState(state, tgtSegments[0]);
     effectiveTargetParentPath = targetParentPath;
   }
@@ -1002,8 +1005,8 @@ export async function swapExcelNodes(
   path2: string,
 ): Promise<ExcelSwapResult> {
   const state = await loadWorkbookState(filePath);
-  const seg1 = path1.trimStart("/").split("/", 2);
-  const seg2 = path2.trimStart("/").split("/", 2);
+  const seg1 = path1.replace(/^\/+/, "").split("/", 2);
+  const seg2 = path2.replace(/^\/+/, "").split("/", 2);
 
   if (seg1.length < 2 || seg2.length < 2) {
     throw new UsageError("Swap requires element paths (e.g. /Sheet1/row[1] /Sheet1/row[2])");
@@ -1069,7 +1072,7 @@ export async function copyFromExcelNode(
   options?: { index?: number },
 ): Promise<{ path: string }> {
   const state = await loadWorkbookState(filePath);
-  const segments = sourcePath.trimStart("/").split("/", 2);
+  const segments = sourcePath.replace(/^\/+/, "").split("/", 2);
   const sheetName = segments[0];
   const sheet = ensureSheetState(state, sheetName);
 
@@ -1100,7 +1103,7 @@ export async function copyFromExcelNode(
   }
 
   // Find target
-  const tgtSegments = targetParentPath.trimStart("/").split("/", 2);
+  const tgtSegments = targetParentPath.replace(/^\/+/, "").split("/", 2);
   const tgtSheet = ensureSheetState(state, tgtSegments[0]);
   const targetIndex = options?.index;
 
@@ -1144,19 +1147,16 @@ export async function addExcelPart(
   const normalizedType = partType.toLowerCase();
 
   if (normalizedType === "chart") {
-    const sheetName = parentPartPath.trimStart("/");
+    const sheetName = parentPartPath.replace(/^\/+/, "");
     const sheet = ensureSheetState(state, sheetName);
+    const props = properties ?? {};
 
-    // Create chart entry in sheet's drawing references
-    // For now, return a placeholder - actual chart part creation requires ZIP manipulation
-    const chartIdx = (sheet.charts?.length ?? 0) + 1;
-    if (!sheet.charts) sheet.charts = [];
-    sheet.charts.push({
-      relTarget: `../charts/chart${chartIdx}.xml`,
-    });
-    updateSheetXml(sheet);
+    // Use the existing addChart infrastructure
+    const chart = addChart(state, sheet, props);
+
     await writeWorkbookState(filePath, state);
-    return { relId: `rId${chartIdx}`, partPath: `/${sheetName}/chart[${chartIdx}]` };
+    const chartCount = getSheetCharts(state, sheet).length;
+    return { relId: `rId${chartCount}`, partPath: `/${sheetName}/chart[${chartCount}]` };
   }
 
   throw new UsageError(`Unknown part type: ${partType}. Supported: chart.`);
@@ -1165,22 +1165,163 @@ export async function addExcelPart(
 export async function rawSetExcelNode(
   filePath: string,
   partPath: string,
-  xpath: string,
+  xpathExpr: string,
   action: string,
   xml?: string,
 ): Promise<{ affected: number }> {
   const state = await loadWorkbookState(filePath);
-  // RawSet is a no-op stub for now - actual implementation requires XML manipulation library
-  // The C# version uses RawXmlHelper.Execute for XPath-based XML modifications
-  console.log(`raw-set: part=${partPath} xpath=${xpath} action=${action}`);
-  return { affected: 0 };
+
+  // Get the XML content at partPath
+  let xmlContent: string;
+  if (partPath === "/" || partPath === "/workbook") {
+    xmlContent = state.workbookXml;
+  } else if (partPath === "/styles") {
+    xmlContent = state.styleSheetXml ?? "";
+  } else if (partPath === "/sharedstrings") {
+    const sstEntry = [...state.zip.entries()].find(([name]) => name.includes("sharedStrings"));
+    xmlContent = sstEntry?.[1]?.toString("utf8") ?? "";
+  } else {
+    // Try as sheet path
+    const sheetMatch = /^\/([^/]+)$/i.exec(partPath);
+    if (sheetMatch) {
+      const sheet = state.sheets.find((s) => s.name.toLowerCase() === sheetMatch[1].toLowerCase());
+      xmlContent = sheet?.xml ?? "";
+    } else {
+      // Try to find in ZIP directly
+      const zipPath = partPath.startsWith("/") ? partPath.slice(1) : partPath;
+      const entry = [...state.zip.entries()].find(([name]) => name.includes(zipPath));
+      xmlContent = entry?.[1]?.toString("utf8") ?? "";
+    }
+  }
+
+  if (!xmlContent) {
+    throw new OfficekitError(`Part not found: ${partPath}`, "not_found");
+  }
+
+  // Parse XML
+  const parser = new DOMParser();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doc: any = parser.parseFromString(xmlContent, "text/xml");
+
+  // Apply XPath
+  let affected = 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const selectNodes = (expr: string, d: any) => (xpath as any).select(expr, d);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nodes: any[] = selectNodes(xpathExpr, doc);
+
+    if (action === "delete" || action === "remove") {
+      for (const node of nodes) {
+        if (node.parentNode) {
+          node.parentNode.removeChild(node);
+          affected++;
+        }
+      }
+    } else if (action === "update" || action === "set") {
+      if (xml) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const newDoc: any = parser.parseFromString(xml, "text/xml");
+        const newNodes: any[] = selectNodes("//*", newDoc);
+        for (let i = 0; i < Math.min(nodes.length, newNodes.length); i++) {
+          const newNode = newNodes[i];
+          const oldNode = nodes[i];
+          if (newNode && oldNode && newNode.attributes) {
+            for (let j = 0; j < newNode.attributes.length; j++) {
+              const attr = newNode.attributes.item(j);
+              if (attr) {
+                oldNode.setAttribute(attr.name, attr.value);
+              }
+            }
+            affected++;
+          }
+        }
+      }
+    } else if (action === "insert" || action === "append") {
+      if (xml && nodes.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const newDoc: any = parser.parseFromString(xml, "text/xml");
+        const newNodes: any[] = selectNodes("//*", newDoc);
+        const parentNode = nodes[0]?.parentNode;
+        if (parentNode) {
+          for (const newNode of newNodes) {
+            parentNode.appendChild(newNode);
+            affected++;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    throw new OfficekitError(`XPath error: ${e instanceof Error ? e.message : String(e)}`, "xpath_error");
+  }
+
+  // Serialize and save back
+  const serializer = new XMLSerializer();
+  const updatedXml = serializer.serializeToString(doc);
+
+  // Update the ZIP
+  if (partPath === "/" || partPath === "/workbook") {
+    state.workbookXml = updatedXml;
+  } else {
+    // Find and update the ZIP entry
+    const zipPath = partPath.startsWith("/") ? partPath.slice(1) : partPath;
+    const entryName = [...state.zip.keys()].find((name) => name.includes(zipPath));
+    if (entryName) {
+      state.zip.set(entryName, Buffer.from(updatedXml, "utf8"));
+    } else {
+      state.zip.set(zipPath, Buffer.from(updatedXml, "utf8"));
+    }
+  }
+
+  await writeWorkbookState(filePath, state);
+  return { affected };
 }
 
-export async function validateExcelDocument(filePath: string): Promise<{ errors: Array<{ message: string }> }> {
+export async function validateExcelDocument(filePath: string): Promise<{ errors: Array<{ message: string; path?: string }> }> {
   const state = await loadWorkbookState(filePath);
-  // Validation stub - returns empty errors
-  // The C# version uses RawXmlHelper.ValidateDocument
-  return { errors: [] };
+  const errors: Array<{ message: string; path?: string }> = [];
+
+  // Check required OpenXML parts exist
+  const requiredParts = [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+  ];
+
+  for (const part of requiredParts) {
+    if (!state.zip.has(part)) {
+      errors.push({ message: `Missing required part: ${part}`, path: part });
+    }
+  }
+
+  // Check workbook.xml is well-formed XML
+  try {
+    new DOMParser().parseFromString(state.workbookXml, "text/xml");
+  } catch (e) {
+    errors.push({ message: `Invalid workbook.xml: ${e instanceof Error ? e.message : String(e)}`, path: "xl/workbook.xml" });
+  }
+
+  // Check each sheet XML is well-formed
+  for (const sheet of state.sheets) {
+    try {
+      new DOMParser().parseFromString(sheet.xml, "text/xml");
+    } catch (e) {
+      errors.push({ message: `Invalid sheet XML: ${e instanceof Error ? e.message : String(e)}`, path: sheet.entryName });
+    }
+  }
+
+  // Check shared strings if present
+  const sstEntry = [...state.zip.entries()].find(([name]) => name.includes("sharedStrings"));
+  if (sstEntry) {
+    try {
+      new DOMParser().parseFromString(sstEntry[1].toString("utf8"), "text/xml");
+    } catch (e) {
+      errors.push({ message: `Invalid shared strings: ${e instanceof Error ? e.message : String(e)}`, path: sstEntry[0] });
+    }
+  }
+
+  return { errors };
 }
 
 function throwUsage(message: string): never {
@@ -3969,13 +4110,11 @@ function evaluateFormulaExpression(
     VAR_P: (args) => evaluateVarFormula(state, args, sheet, visited, false),
     MODE_SNGL: (args) => evaluateModeFormula(state, args, sheet, visited),
     RANK_EQ: (args) => evaluateRankFormula(state, args, sheet, visited),
-    PERCENTILE_INC: (args) => evaluatePercentileFormula(state, args, sheet, visited),
     BIN2DEC: (args) => { const parts = splitFormulaArgs(args); const val = parts[0]?.replace(/"/g, "") ?? ""; const n = parseInt(val, 2); return Number.isFinite(n) ? n : undefined; },
     HEX2DEC: (args) => { const parts = splitFormulaArgs(args); const val = parts[0]?.replace(/"/g, "") ?? ""; const n = parseInt(val, 16); return Number.isFinite(n) ? n : undefined; },
     OCT2DEC: (args) => { const parts = splitFormulaArgs(args); const val = parts[0]?.replace(/"/g, "") ?? ""; const n = parseInt(val, 8); return Number.isFinite(n) ? n : undefined; },
     SWITCH: (args) => evaluateSwitchFormula(state, args, sheet, visited),
-    ROMAN: (args) => { const num = Math.round(firstNumericFormulaArg(state, args, sheet, visited) ?? 0); if (num < 0 || num > 3999) return undefined; const thousands = ['','M','MM','MMM']; const hundreds = ['','C','CC','CCC','CD','D','DC','DCC','DCCC','CM']; const tens = ['','X','XX','XXX','XL','L','LX','LXX','LXXX','XC']; const ones = ['','I','II','III','IV','V','VI','VII','VIII','IX']; return thousands[Math.floor(num/1000)] + hundreds[Math.floor((num%1000)/100)] + tens[Math.floor((num%100)/10)] + ones[num%10]; },
-    ARABIC: (args) => { const s = splitFormulaArgs(args)[0]?.replace(/"/g, "") ?? ""; const vals = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}; let result = 0; let prev = 0; for (let i = s.length - 1; i >= 0; i--) { const v = vals[s[i].toUpperCase()] || 0; result += v >= prev ? v : -v; prev = v; } return result; },
+    ARABIC: (args) => { const s = splitFormulaArgs(args)[0]?.replace(/"/g, "") ?? ""; const vals: Record<string, number> = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}; let result = 0; let prev = 0; for (let i = s.length - 1; i >= 0; i--) { const v = vals[s[i].toUpperCase()] || 0; result += v >= prev ? v : -v; prev = v; } return result; },
     INDIRECT: () => undefined,
     OFFSET: () => undefined,
     RATE: () => undefined,
@@ -4136,7 +4275,7 @@ function evaluateRoundFormula(
 }
 
 function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, expression: string, sheet: ExcelSheetModel) {
-  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT|PROPER|CLEAN|REPT|CHAR|CODE|TEXT|FIXED|NUMBERVALUE|DOLLAR|YEN|T|N|VALUE|DEC2BIN|DEC2HEX|DEC2OCT|BIN2HEX|BIN2OCT|HEX2BIN|HEX2OCT|OCT2BIN|OCT2HEX|SWITCH|ADDRESS)\((.*)\)$/i.exec(expression);
+  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT|PROPER|CLEAN|REPT|CHAR|CODE|TEXT|FIXED|NUMBERVALUE|DOLLAR|YEN|T|N|VALUE|DEC2BIN|DEC2HEX|DEC2OCT|BIN2HEX|BIN2OCT|HEX2BIN|HEX2OCT|OCT2BIN|OCT2HEX|SWITCH|ADDRESS|ROMAN)\((.*)\)$/i.exec(expression);
   if (!direct) return undefined;
   const fn = direct[1].toUpperCase();
   const args = splitFormulaArgs(direct[2]);
@@ -4231,7 +4370,20 @@ function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, ex
   if (fn === "TEXT") {
     const val = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0);
     const fmt = resolveText(args[1] ?? "0");
-    try { return val.toString(fmt.replace(/#/g, '0')); } catch { return String(val); }
+    // Basic numeric formatting - handles simple format strings like "0.00", "#,##0", etc.
+    try {
+      const hasDecimals = fmt.includes('.');
+      const hasThousands = fmt.includes(',');
+      const decimalMatch = fmt.match(/\.(0+|#+)/);
+      const decimalPlaces = decimalMatch ? decimalMatch[1].length : 0;
+      let result = val.toFixed(decimalPlaces);
+      if (hasThousands) {
+        const parts = result.split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        result = parts.join('.');
+      }
+      return result;
+    } catch { return String(val); }
   }
   if (fn === "FIXED") {
     const val = firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0;
@@ -4284,6 +4436,7 @@ function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, ex
   if (fn === "HEX2OCT") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 16); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(8); if (places > 0) s = s.padStart(places, '0'); return s; }
   if (fn === "OCT2BIN") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 8); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(2); if (places > 0) s = s.padStart(places, '0'); return s; }
   if (fn === "OCT2HEX") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 8); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(16).toUpperCase(); if (places > 0) s = s.padStart(places, '0'); return s; }
+  if (fn === "ROMAN") { const num = Math.round(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0); if (num < 0 || num > 3999) return undefined; const thousands = ['','M','MM','MMM']; const hundreds = ['','C','CC','CCC','CD','D','DC','DCC','DCCC','CM']; const tens = ['','X','XX','XXX','XL','L','LX','LXX','LXXX','XC']; const ones = ['','I','II','III','IV','V','VI','VII','VIII','IX']; return thousands[Math.floor(num/1000)] + hundreds[Math.floor((num%1000)/100)] + tens[Math.floor((num%100)/10)] + ones[num%10]; }
   if (fn === "ADDRESS") { const row = Math.round(firstNumericFormulaArg(state, args[0] ?? "1", sheet, new Set()) ?? 1); const col = Math.round(firstNumericFormulaArg(state, args[1] ?? "1", sheet, new Set()) ?? 1); const absNum = args[2] !== undefined ? Math.round(firstNumericFormulaArg(state, args[2], sheet, new Set()) ?? 1) : 1; const a1Style = args[3] === undefined || firstNumericFormulaArg(state, args[3], sheet, new Set()) !== 0; const sheetText = args[4] !== undefined ? resolveText(args[4]) : ""; const colStr = (() => { let c = ""; let n = col; while (n > 0) { c = String.fromCharCode(64 + (n % 26 || 26)) + c; n = Math.floor((n - 1) / 26); } return c; })(); const rowStr = String(row); if (!a1Style) return (sheetText ? sheetText + "!" : "") + "R" + rowStr + "C" + col; const absCol = absNum === 1 || absNum === 2 ? "$" + colStr : colStr; const absRow = absNum === 1 || absNum === 3 ? "$" + rowStr : rowStr; return (sheetText ? sheetText + "!" : "") + absCol + absRow; }
   return undefined;
 }
