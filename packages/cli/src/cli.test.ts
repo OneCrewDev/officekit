@@ -1013,6 +1013,24 @@ describe("officekit CLI scaffold", () => {
     expect(workbookXml).toContain('lockStructure="1"');
   });
 
+  test("preserves sheet-level extras when mutating a metadata-free workbook", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-sheet-extras-"));
+    const filePath = path.join(dir, "sheet-extras.xlsx");
+    await writeFile(filePath, buildExternalExcelSheetExtrasZip());
+
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=Updated"]);
+    const zip = readStoredZip(await readFile(filePath));
+    const sheetXml = zip.get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(sheetXml).toContain('<sheetProtection sheet="1"');
+    expect(sheetXml).toContain('<pageSetup orientation="landscape"');
+    expect(sheetXml).toContain('<oddHeader>&amp;LHeader Left</oddHeader>');
+    expect(sheetXml).toContain('<oddFooter>&amp;RFooter Right</oddFooter>');
+    expect(sheetXml).toContain('<rowBreaks count="1" manualBreakCount="1">');
+    expect(sheetXml).toContain('<colBreaks count="1" manualBreakCount="1">');
+    expect(sheetXml).toContain('<t>Updated</t>');
+  });
+
   test("watch keeps a preview server alive until interrupted", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-watch-"));
     const filePath = path.join(dir, "watch.docx");
@@ -1399,6 +1417,55 @@ function buildExternalExcelStyledFormulaZip() {
       <c r="B1" s="1"><f>SUM(A1:A1)</f><v>34</v></c>
     </row>
   </sheetData>
+</worksheet>`),
+    },
+  ]);
+}
+
+function buildExternalExcelSheetExtrasZip() {
+  return createStoredZip([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`),
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/workbook.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`),
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Original</t></is></c></row></sheetData>
+  <sheetProtection sheet="1"/>
+  <pageSetup orientation="landscape" paperSize="9"/>
+  <headerFooter><oddHeader>&amp;LHeader Left</oddHeader><oddFooter>&amp;RFooter Right</oddFooter></headerFooter>
+  <rowBreaks count="1" manualBreakCount="1"><brk id="5" man="1"/></rowBreaks>
+  <colBreaks count="1" manualBreakCount="1"><brk id="2" man="1"/></colBreaks>
 </worksheet>`),
     },
   ]);
