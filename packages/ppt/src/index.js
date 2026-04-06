@@ -62,6 +62,9 @@ export * from "./views.js";
 // Media operations (getMedia, addPicture, removeMedia, replacePicture, getMediaData)
 export * from "./media.js";
 
+// Advanced media operations (addVideo, addAudio, getMediaElements, removeMediaElement, setMediaOptions)
+export * from "./media-advanced.js";
+
 // Hyperlink operations (getHyperlink, setHyperlink, removeHyperlink, setExternalHyperlink, setInternalHyperlink)
 export * from "./hyperlinks.js";
 
