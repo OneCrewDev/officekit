@@ -3546,7 +3546,7 @@ function evaluateRoundFormula(
 }
 
 function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, expression: string, sheet: ExcelSheetModel) {
-  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE)\((.*)\)$/i.exec(expression);
+  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT)\((.*)\)$/i.exec(expression);
   if (!direct) return undefined;
   const fn = direct[1].toUpperCase();
   const args = splitFormulaArgs(direct[2]);
@@ -3575,6 +3575,47 @@ function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, ex
   if (fn === "TRIM") return resolveText(args[0] ?? "").trim().replace(/\s+/g, " ");
   if (fn === "CONCAT" || fn === "CONCATENATE") {
     return args.map((part) => resolveText(part)).join("");
+  }
+  if (fn === "FIND" || fn === "SEARCH") {
+    const findText = resolveText(args[0] ?? "");
+    const withinText = resolveText(args[1] ?? "");
+    const startNum = Math.max(1, Number(firstNumericFormulaArg(state, args[2] ?? "1", sheet, new Set()) ?? 1)) - 1;
+    const idx = fn === "FIND"
+      ? withinText.indexOf(findText, startNum)
+      : withinText.toLowerCase().indexOf(findText.toLowerCase(), startNum);
+    return idx >= 0 ? String(idx + 1) : undefined;
+  }
+  if (fn === "REPLACE") {
+    const oldText = resolveText(args[0] ?? "");
+    const startNum = Math.max(1, Number(firstNumericFormulaArg(state, args[1] ?? "1", sheet, new Set()) ?? 1)) - 1;
+    const numChars = Math.max(0, Number(firstNumericFormulaArg(state, args[2] ?? "0", sheet, new Set()) ?? 0));
+    const newText = resolveText(args[3] ?? "");
+    return oldText.slice(0, startNum) + newText + oldText.slice(startNum + numChars);
+  }
+  if (fn === "SUBSTITUTE") {
+    const text = resolveText(args[0] ?? "");
+    const oldText = resolveText(args[1] ?? "");
+    const newText = resolveText(args[2] ?? "");
+    if (args[3] !== undefined) {
+      const nth = Math.max(1, Number(firstNumericFormulaArg(state, args[3], sheet, new Set()) ?? 1));
+      let count = 0;
+      let result = text;
+      let pos = 0;
+      while (true) {
+        const idx = result.toLowerCase().indexOf(oldText.toLowerCase(), pos);
+        if (idx < 0) break;
+        count++;
+        if (count === nth) {
+          return result.slice(0, idx) + newText + result.slice(idx + oldText.length);
+        }
+        pos = idx + 1;
+      }
+      return result;
+    }
+    return text.replace(new RegExp(oldText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), newText);
+  }
+  if (fn === "EXACT") {
+    return (resolveText(args[0] ?? "") === resolveText(args[1] ?? "")) ? "TRUE" : "FALSE";
   }
   return undefined;
 }
