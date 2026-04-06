@@ -6,6 +6,6 @@ export {
   wordAdapterManifest
 } from "./manifest.js";
 
-export { getWordNode, queryWordNodes, getDocumentInfo, addWordNode, setWordNode, removeWordNode, moveWordNode, swapWordNodes, batchWordNodes, viewWordDocument, setWordStyle, setWordSection, setWordDocDefaults, rawWordDocument, rawSetWordDocument, setWordCompatibility } from "./adapter.js";
+export { getWordNode, queryWordNodes, getDocumentInfo, addWordNode, setWordNode, removeWordNode, moveWordNode, swapWordNodes, batchWordNodes, viewWordDocument, setWordStyle, setWordSection, setWordDocDefaults, rawWordDocument, rawSetWordDocument, setWordCompatibility, addWordPart, copyWordNode, ensureParaIds, setDocumentProperties } from "./adapter.js";
 export { parsePath, buildPath, validatePath, isValidPath } from "./path.js";
 export { parseSelector, buildSelector, validateSelector, isValidSelector } from "./selectors.js";

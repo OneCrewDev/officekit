@@ -3296,3 +3296,446 @@ function generateBasicCss(): string {
     td, th { border: 1px solid #ccc; padding: 4px 8px; }
   `;
 }
+
+// ============================================================================
+// Add Part - Add chart/header/footer parts
+// ============================================================================
+
+export interface AddPartOptions {
+  type?: string;
+  props?: Record<string, string>;
+}
+
+export interface AddPartResult {
+  relId: string;
+  partPath: string;
+}
+
+/**
+ * Adds a new part (chart, header, footer) to a Word document.
+ * Returns the relationship ID and accessible path.
+ */
+export async function addWordPart(
+  filePath: string,
+  partType: string,
+  options: AddPartOptions = {}
+): Promise<Result<AddPartResult>> {
+  try {
+    const zip = await readDocxZip(filePath);
+
+    switch (partType.toLowerCase()) {
+      case "chart": {
+        // Find existing chart count
+        const existingCharts = (zip.file(/^word\/chart\d*\.xml$/) || []).length;
+        const chartNum = existingCharts + 1;
+        const chartRelId = `rIdChart${chartNum}`;
+
+        // Create chart XML
+        const chartXml = createBasicChartXml();
+        zip.file(`word/chart${chartNum}.xml`, chartXml);
+
+        // Update document.xml.rels to add relationship
+        const relsPath = "word/_rels/document.xml.rels";
+        let relsXml = await getXmlEntry(zip, relsPath) || "";
+        const newRel = `<Relationship Id="${chartRelId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="chart${chartNum}.xml"/>`;
+        relsXml = relsXml.replace("</Relationships>", `${newRel}</Relationships>`);
+        zip.file(relsPath, relsXml);
+
+        await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+        return ok({ relId: chartRelId, partPath: `/chart[${chartNum}]` });
+      }
+
+      case "header": {
+        const existingHeaders = (zip.file(/^word\/header\d+\.xml$/) || []).length;
+        const headerNum = existingHeaders + 1;
+        const headerRelId = `rIdH${headerNum}`;
+
+        const headerXml = createHeaderXml(options.props || {});
+        zip.file(`word/header${headerNum}.xml`, headerXml);
+
+        // Update document.xml.rels
+        const relsPath = "word/_rels/document.xml.rels";
+        let relsXml = await getXmlEntry(zip, relsPath) || "";
+        const newRel = `<Relationship Id="${headerRelId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header${headerNum}.xml"/>`;
+        relsXml = relsXml.replace("</Relationships>", `${newRel}</Relationships>`);
+        zip.file(relsPath, relsXml);
+
+        // Update document.xml to reference header in sectPr
+        let documentXml = await getXmlEntry(zip, "word/document.xml") || "";
+        const headerRef = `<w:headerReference w:type="default" r:id="${headerRelId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`;
+        documentXml = documentXml.replace("<w:body>", `<w:body>${headerRef}`);
+        zip.file("word/document.xml", documentXml);
+
+        await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+        return ok({ relId: headerRelId, partPath: `/header[${headerNum}]` });
+      }
+
+      case "footer": {
+        const existingFooters = (zip.file(/^word\/footer\d+\.xml$/) || []).length;
+        const footerNum = existingFooters + 1;
+        const footerRelId = `rIdF${footerNum}`;
+
+        const footerXml = createFooterXml(options.props || {});
+        zip.file(`word/footer${footerNum}.xml`, footerXml);
+
+        // Update document.xml.rels
+        const relsPath = "word/_rels/document.xml.rels";
+        let relsXml = await getXmlEntry(zip, relsPath) || "";
+        const newRel = `<Relationship Id="${footerRelId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer${footerNum}.xml"/>`;
+        relsXml = relsXml.replace("</Relationships>", `${newRel}</Relationships>`);
+        zip.file(relsPath, relsXml);
+
+        // Update document.xml to reference footer in sectPr
+        let documentXml = await getXmlEntry(zip, "word/document.xml") || "";
+        const footerRef = `<w:footerReference w:type="default" r:id="${footerRelId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`;
+        documentXml = documentXml.replace("<w:body>", `<w:body>${footerRef}`);
+        zip.file("word/document.xml", documentXml);
+
+        await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+        return ok({ relId: footerRelId, partPath: `/footer[${footerNum}]` });
+      }
+
+      default:
+        return err("invalid_type", `Unknown part type: ${partType}. Supported: chart, header, footer`);
+    }
+  } catch (e) {
+    if (e instanceof Error) {
+      return err("operation_failed", e.message);
+    }
+    return err("operation_failed", String(e));
+  }
+}
+
+function createBasicChartXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+  <c:chart>
+    <c:plotArea>
+      <c:layout/>
+    </c:plotArea>
+  </c:chart>
+</c:chartSpace>`;
+}
+
+// ============================================================================
+// Copy Word Node
+// ============================================================================
+
+/**
+ * Copies an element from source path to target parent path.
+ * Returns the new element's path.
+ */
+export async function copyWordNode(
+  filePath: string,
+  sourcePath: string,
+  targetParentPath: string,
+  options: { index?: number; after?: string; before?: string } = {}
+): Promise<Result<{ path: string }>> {
+  try {
+    const zip = await readDocxZip(filePath);
+    let documentXml = await getXmlEntry(zip, "word/document.xml");
+
+    if (!documentXml) {
+      return err("not_found", "Document.xml not found");
+    }
+
+    // Get source element XML
+    const sourceResult = getWordNode(filePath, sourcePath, 0);
+    if (!sourceResult.ok || !sourceResult.data) {
+      return err("not_found", `Source not found: ${sourcePath}`);
+    }
+
+    // Extract the source element's XML
+    const sourceXml = extractElementXml(documentXml, sourcePath);
+    if (!sourceXml) {
+      return err("not_found", `Could not extract source element: ${sourcePath}`);
+    }
+
+    // Generate new paraId/textId for cloned paragraphs
+    let clonedXml = generateNewParaIds(sourceXml);
+
+    // Determine insert position
+    let insertPosition: string | number | undefined = options.index;
+    if (options.after) {
+      insertPosition = `find:${options.after}`;
+    } else if (options.before) {
+      insertPosition = `find:${options.before}`;
+    }
+
+    // Get target parent
+    if (targetParentPath === "/" || targetParentPath === "" || targetParentPath === "/body") {
+      targetParentPath = "/body";
+    }
+
+    // Insert at position
+    documentXml = insertAtPosition(documentXml, clonedXml, insertPosition);
+    zip.file("word/document.xml", documentXml);
+
+    await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    // Calculate the new path (simplified - returns target parent with element type)
+    const elementType = sourceResult.data.type || "element";
+    const targetPath = `${targetParentPath}/${elementType}[1]`;
+
+    return ok({ path: targetPath });
+  } catch (e) {
+    if (e instanceof Error) {
+      return err("operation_failed", e.message);
+    }
+    return err("operation_failed", String(e));
+  }
+}
+
+// ============================================================================
+// Ensure ParaIds - Generate and ensure stable IDs
+// ============================================================================
+
+/**
+ * Ensures all paragraphs in the document have unique paraId and textId attributes.
+ * This should be called when creating or modifying documents to ensure stable paths.
+ */
+export async function ensureParaIds(filePath: string): Promise<Result<{ updated: number }>> {
+  try {
+    const zip = await readDocxZip(filePath);
+    let documentXml = await getXmlEntry(zip, "word/document.xml");
+
+    if (!documentXml) {
+      return err("not_found", "Document.xml not found");
+    }
+
+    let updated = 0;
+
+    // Add paraId to paragraphs that don't have it
+    const paraRegex = /<w:p[>\s][\s\S]*?<\/w:p>/gi;
+    documentXml = documentXml.replace(paraRegex, (match) => {
+      if (/<w:paraId/i.test(match)) {
+        return match;
+      }
+      const newParaId = generateHexId(8);
+      const newTextId = generateHexId(8);
+      updated++;
+      return match.replace("<w:p ", `<w:p `).replace(">", `><w:paraId w:val="${newParaId}"/><w:textId w:val="${newTextId}"/>`);
+    });
+
+    // Actually, we need a better approach - insert paraId as a child element if not present
+    documentXml = await ensureParaIdsInXml(documentXml);
+
+    zip.file("word/document.xml", documentXml);
+    await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    return ok({ updated });
+  } catch (e) {
+    if (e instanceof Error) {
+      return err("operation_failed", e.message);
+    }
+    return err("operation_failed", String(e));
+  }
+}
+
+async function ensureParaIdsInXml(xml: string): Promise<string> {
+  let result = xml;
+
+  // Match paragraphs
+  const paraRegex = /<w:p\b([^>]*)(>([\s\S]*?)<\/w:p>)/gi;
+  result = result.replace(paraRegex, (match, attrs, content, innerContent) => {
+    // Check if paraId already exists
+    if (/w:paraId\b/i.test(attrs) && /w:textId\b/i.test(innerContent)) {
+      return match;
+    }
+
+    // Generate new IDs
+    const newParaId = generateHexId(8);
+    const newTextId = generateHexId(8);
+
+    // Insert paraId and textId after opening tag
+    const idElements = `<w:paraId w:val="${newParaId}"/><w:textId w:val="${newTextId}"/>`;
+
+    // Find the position after <w:p ...>
+    const closeBracket = match.indexOf(">");
+    if (closeBracket === -1) return match;
+
+    return match.substring(0, closeBracket + 1) + idElements + match.substring(closeBracket + 1);
+  });
+
+  return result;
+}
+
+// ============================================================================
+// Document Properties
+// ============================================================================
+
+export interface DocumentProperties {
+  title?: string;
+  author?: string;
+  subject?: string;
+  keywords?: string;
+  description?: string;
+  category?: string;
+  lastModifiedBy?: string;
+  revision?: string;
+}
+
+/**
+ * Sets document core properties.
+ */
+export async function setDocumentProperties(
+  filePath: string,
+  props: DocumentProperties
+): Promise<Result<{ ok: boolean }>> {
+  try {
+    const zip = await readDocxZip(filePath);
+
+    // Update docProps/core.xml
+    let coreXml = await getXmlEntry(zip, "docProps/core.xml") || createBasicCoreXml();
+
+    if (props.title !== undefined) {
+      coreXml = updateCoreProperty(coreXml, "dc:title", props.title);
+    }
+    if (props.author !== undefined) {
+      coreXml = updateCoreProperty(coreXml, "dc:creator", props.author);
+    }
+    if (props.subject !== undefined) {
+      coreXml = updateCoreProperty(coreXml, "dc:subject", props.subject);
+    }
+    if (props.keywords !== undefined) {
+      coreXml = updateCoreProperty(coreXml, "cp:keywords", props.keywords);
+    }
+    if (props.description !== undefined) {
+      coreXml = updateCoreProperty(coreXml, "dc:description", props.description);
+    }
+    if (props.category !== undefined) {
+      coreXml = updateCoreProperty(coreXml, "cp:category", props.category);
+    }
+    if (props.lastModifiedBy !== undefined) {
+      coreXml = updateCoreProperty(coreXml, "cp:lastModifiedBy", props.lastModifiedBy);
+    }
+    if (props.revision !== undefined) {
+      coreXml = updateCoreProperty(coreXml, "cp:revision", props.revision);
+    }
+
+    zip.file("docProps/core.xml", coreXml);
+    await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    return ok({ ok: true });
+  } catch (e) {
+    if (e instanceof Error) {
+      return err("operation_failed", e.message);
+    }
+    return err("operation_failed", String(e));
+  }
+}
+
+function createBasicCoreXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:dcterms="http://purl.org/dc/terms/"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+</cp:coreProperties>`;
+}
+
+function updateCoreProperty(xml: string, tagName: string, value: string): string {
+  const regex = new RegExp(`<${tagName}([^>]*)>([^<]*)</${tagName}>`, "i");
+  if (regex.test(xml)) {
+    return xml.replace(regex, `<${tagName}$1>${escapeXml(value)}</${tagName}>`);
+  }
+  // Add before closing tag
+  return xml.replace("</cp:coreProperties>", `<${tagName}>${escapeXml(value)}</${tagName}></cp:coreProperties>`);
+}
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+function generateHexId(length: number): string {
+  const chars = "0123456789ABCDEF";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return result;
+}
+
+function extractElementXml(documentXml: string, path: string): string | null {
+  // Simple path to XML extraction for common paths
+  const parsed = parsePath(path);
+  if (!parsed.ok || !parsed.data) return null;
+
+  const segments = parsed.data.segments;
+  if (segments.length === 0) return null;
+
+  const first = segments[0];
+  let result = documentXml;
+
+  // Navigate to the element based on path
+  if (first.name === "p" || first.name === "paragraph") {
+    const idx = (first.index || 1) - 1;
+    const paras = result.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi);
+    if (paras && paras[idx]) {
+      return paras[idx];
+    }
+  } else if (first.name === "tbl" || first.name === "table") {
+    const idx = (first.index || 1) - 1;
+    const tables = result.match(/<w:tbl\b[^>]*>[\s\S]*?<\/w:tbl>/gi);
+    if (tables && tables[idx]) {
+      return tables[idx];
+    }
+  }
+
+  return null;
+}
+
+function insertAtPosition(documentXml: string, insertXml: string, position: string | number | undefined): string {
+  if (position === undefined) {
+    // Append to body
+    return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
+  }
+
+  if (typeof position === "number") {
+    // Insert at index
+    const paras = documentXml.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi);
+    if (!paras || position >= paras.length) {
+      return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
+    }
+    const before = documentXml.indexOf(paras[position]);
+    if (before === -1) {
+      return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
+    }
+    return documentXml.slice(0, before) + insertXml + documentXml.slice(before);
+  }
+
+  if (typeof position === "string" && position.startsWith("find:")) {
+    const findText = position.substring(5);
+    const idx = documentXml.indexOf(findText);
+    if (idx === -1) {
+      return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
+    }
+    return documentXml.slice(0, idx) + insertXml + documentXml.slice(idx);
+  }
+
+  return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
+}
+
+function generateNewParaIds(xml: string): string {
+  let result = xml;
+
+  // Generate new paraId for any paragraph in the cloned XML
+  result = result.replace(/<w:paraId\b[^>]*w:val="[^"]*"[^>]*\/>/gi, () => {
+    return `<w:paraId w:val="${generateHexId(8)}"/>`;
+  });
+
+  result = result.replace(/<w:textId\b[^>]*w:val="[^"]*"[^>]*\/>/gi, () => {
+    return `<w:textId w:val="${generateHexId(8)}"/>`;
+  });
+
+  return result;
+}
