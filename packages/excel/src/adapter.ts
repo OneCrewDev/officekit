@@ -3392,6 +3392,10 @@ function evaluateFormulaExpression(
       const values = extractFormulaArgValues(state, args, sheet, visited);
       return values.reduce((acc, v) => acc * v, 1);
     },
+    ROW: (args) => evaluateRowColumnFormula(args, sheet, true),
+    COLUMN: (args) => evaluateRowColumnFormula(args, sheet, false),
+    ROWS: (args) => evaluateRowsColumnsFormula(state, args, sheet, true),
+    COLUMNS: (args) => evaluateRowsColumnsFormula(state, args, sheet, false),
     QUOTIENT: (args) => {
       const parts = splitFormulaArgs(args);
       const num = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0;
@@ -3475,7 +3479,7 @@ function evaluateFormulaExpression(
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|PRODUCT|QUOTIENT|COUNTBLANK)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -4039,6 +4043,28 @@ function evaluatePvFormula(state: ExcelWorkbookState | undefined, args: string, 
   const fv = parts[3] !== undefined ? (firstNumericFormulaArg(state, parts[3], sheet, visited) ?? 0) : 0;
   if (rate === 0) return -(fv + pmt * nper);
   return -(fv / Math.pow(1 + rate, nper) + pmt * (1 - Math.pow(1 + rate, -nper)) / rate);
+}
+
+function evaluateRowColumnFormula(args: string, sheet: ExcelSheetModel, isRow: boolean) {
+  const parts = splitFormulaArgs(args);
+  const ref = parts[0]?.trim() ?? "";
+  const m = /([A-Z]+)(\d+)/i.exec(ref);
+  if (!m) return isRow ? 1 : 1;
+  return isRow ? parseInt(m[2], 10) : colToIndex(m[1]);
+}
+
+function colToIndex(col: string) {
+  let idx = 0;
+  for (const c of col.toUpperCase()) {
+    idx = idx * 26 + (c.charCodeAt(0) - 64);
+  }
+  return idx;
+}
+
+function evaluateRowsColumnsFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, isRows: boolean) {
+  const range = resolveRangeReference(state, args.trim(), sheet);
+  if (!range) return 1;
+  return isRows ? range.cells.length : (range.cells[0]?.length ?? 1);
 }
 
 function resolveCellRef(arg: string, sheet: ExcelSheetModel) {
