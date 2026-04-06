@@ -362,6 +362,127 @@ describe("officekit CLI scaffold", () => {
     expect(rawDrawing.stdout).toContain('descr="Preview image"');
   });
 
+  test("adds Excel worksheet objects through OfficeCLI-style add paths", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-add-objects-"));
+    const filePath = path.join(dir, "add-objects.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=Name"]);
+    await runCli(["set", filePath, "/Sheet1/B1", "--prop", "value=Value"]);
+    await runCli(["set", filePath, "/Sheet1/A2", "--prop", "value=Alpha"]);
+    await runCli(["set", filePath, "/Sheet1/B2", "--prop", "value=10", "--prop", "type=number"]);
+
+    await runCli(["add", filePath, "/Sheet1", "--type", "validation", "--prop", "ref=A2", "--prop", "type=list", "--prop", "formula1=Yes,No", "--prop", "prompt=Pick one"]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "comment", "--prop", "ref=A2", "--prop", "text=Review this row", "--prop", "author=officekit"]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "autofilter", "--prop", "range=A1:B2"]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "rowbreak", "--prop", "row=5"]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "colbreak", "--prop", "col=2"]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "table", "--prop", "ref=A1:B2", "--prop", "name=SalesTable", "--prop", "columns=Name,Value"]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "sparkline", "--prop", "cell=C2", "--prop", "range=A2:B2", "--prop", "type=column"]);
+
+    const sheet = await runCli(["get", filePath, "/Sheet1", "--json"]);
+    const validation = await runCli(["get", filePath, "/Sheet1/validation[1]", "--json"]);
+    const comment = await runCli(["get", filePath, "/Sheet1/comment[1]", "--json"]);
+    const table = await runCli(["get", filePath, "/Sheet1/table[1]", "--json"]);
+    const sparkline = await runCli(["get", filePath, "/Sheet1/sparkline[1]", "--json"]);
+    const rowBreak = await runCli(["get", filePath, "/Sheet1/rowbreak[1]", "--json"]);
+    const colBreak = await runCli(["get", filePath, "/Sheet1/colbreak[1]", "--json"]);
+
+    expect(sheet.stdout).toContain('"autoFilter": "A1:B2"');
+    expect(sheet.stdout).toContain('"rowBreaks": [');
+    expect(sheet.stdout).toContain('"colBreaks": [');
+    expect(validation.stdout).toContain('"validationType": "list"');
+    expect(validation.stdout).toContain('"prompt": "Pick one"');
+    expect(comment.stdout).toContain('"text": "Review this row"');
+    expect(comment.stdout).toContain('"author": "officekit"');
+    expect(table.stdout).toContain('"name": "SalesTable"');
+    expect(table.stdout).toContain('"ref": "A1:B2"');
+    expect(sparkline.stdout).toContain('"location": "C2"');
+    expect(sparkline.stdout).toContain('"sourceRange": "Sheet1!A2:B2"');
+    expect(sparkline.stdout).toContain('"sparklineType": "column"');
+    expect(rowBreak.stdout).toContain('"id": 5');
+    expect(colBreak.stdout).toContain('"id": 2');
+
+    const zip = readStoredZip(await readFile(filePath));
+    const contentTypes = zip.get("[Content_Types].xml")!.toString("utf8");
+    const sheetRels = zip.get("xl/worksheets/_rels/sheet1.xml.rels")!.toString("utf8");
+    const commentsXml = zip.get("xl/comments1.xml")!.toString("utf8");
+    const tableXml = zip.get("xl/tables/table1.xml")!.toString("utf8");
+    const sheetXml = zip.get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(contentTypes).toContain("/xl/comments1.xml");
+    expect(contentTypes).toContain("/xl/tables/table1.xml");
+    expect(sheetRels).toContain("/relationships/comments");
+    expect(sheetRels).toContain("/relationships/table");
+    expect(commentsXml).toContain("Review this row");
+    expect(tableXml).toContain('name="SalesTable"');
+    expect(sheetXml).toContain('<tableParts count="1">');
+    expect(sheetXml).toContain('<rowBreaks count="1" manualBreakCount="1">');
+    expect(sheetXml).toContain('<colBreaks count="1" manualBreakCount="1">');
+    expect(sheetXml).toContain('<x14:sparklineGroup type="column">');
+  });
+
+  test("evaluates simple formulas for display and creates styles from cell props", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-style-formula-"));
+    const filePath = path.join(dir, "style-formula.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=10"]);
+    await runCli(["set", filePath, "/Sheet1/A2", "--prop", "value=20"]);
+    await runCli([
+      "set",
+      filePath,
+      "/Sheet1/B1",
+      "--prop",
+      "formula==SUM(A1:A2)",
+      "--prop",
+      "font.bold=true",
+      "--prop",
+      "font.color=FF0000",
+      "--prop",
+      "fill=FFFF00",
+      "--prop",
+      "alignment.horizontal=center",
+      "--prop",
+      "numFmt=0.00",
+    ]);
+
+    const cell = await runCli(["get", filePath, "/Sheet1/B1", "--json"]);
+    const textView = await runCli(["view", filePath, "text"]);
+    const annotatedView = await runCli(["view", filePath, "annotated"]);
+    const rawStyles = await runCli(["raw", filePath, "/styles"]);
+    const sheetXml = readStoredZip(await readFile(filePath)).get("xl/worksheets/sheet1.xml")!.toString("utf8");
+
+    expect(cell.stdout).toContain('"styleId":');
+    expect(cell.stdout).toContain('"evaluatedValue": "30"');
+    expect(textView.stdout).toContain("[/Sheet1/row[1]] 10\t30");
+    expect(annotatedView.stdout).toContain("B1: [30] <- =SUM(A1:A2)");
+    expect(rawStyles.stdout).toContain("<fonts count=");
+    expect(rawStyles.stdout).toContain('rgb="FFFF0000"');
+    expect(rawStyles.stdout).toContain('patternType="solid"');
+    expect(rawStyles.stdout).toContain('formatCode="0.00"');
+    expect(sheetXml).toMatch(/<c r="B1" s="\d+">/);
+  });
+
+  test("supports richer chart properties beyond title and series name", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-chart-props-"));
+    const filePath = path.join(dir, "chart-props.xlsx");
+    await writeFile(filePath, buildExternalExcelAdvancedObjectsZip());
+
+    await runCli(["set", filePath, "/Sheet1/chart[1]", "--prop", "legend=top", "--prop", "datalabels=value,category", "--prop", "categoryAxisTitle=Months", "--prop", "valueAxisTitle=Revenue"]);
+    const chart = await runCli(["get", filePath, "/Sheet1/chart[1]", "--json"]);
+    const rawChart = await runCli(["raw", filePath, "/Sheet1/chart[1]"]);
+
+    expect(chart.stdout).toContain('"chartType": "bar"');
+    expect(chart.stdout).toContain('"legend": "t"');
+    expect(chart.stdout).toContain('"dataLabels": "value"');
+    expect(chart.stdout).toContain('"categoryAxisTitle": "Months"');
+    expect(chart.stdout).toContain('"valueAxisTitle": "Revenue"');
+    expect(rawChart.stdout).toContain('<c:legendPos val="t"');
+    expect(rawChart.stdout).toContain('<c:showValue val="1"');
+    expect(rawChart.stdout).toContain('<c:showCategoryName val="1"');
+    expect(rawChart.stdout).toContain("Months");
+    expect(rawChart.stdout).toContain("Revenue");
+  });
+
   test("creates and mutates a PowerPoint document vertical slice", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-ppt-"));
     const filePath = path.join(dir, "demo.pptx");
@@ -1707,6 +1828,8 @@ function buildExternalExcelAdvancedObjectsZip() {
           <c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Initial Series</c:v></c:pt></c:strCache></c:strRef></c:tx>
         </c:ser>
       </c:barChart>
+      <c:catAx><c:axId val="1"/></c:catAx>
+      <c:valAx><c:axId val="2"/></c:valAx>
     </c:plotArea>
   </c:chart>
 </c:chartSpace>`),

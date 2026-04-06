@@ -82,6 +82,12 @@ export interface ExcelChartModel {
   title?: string;
   path: string;
   sheet?: string;
+  chartType?: string;
+  legend?: string | boolean;
+  dataLabels?: string;
+  categoryAxisTitle?: string;
+  valueAxisTitle?: string;
+  seriesNames?: string[];
 }
 
 export interface ExcelPivotTableModel {
@@ -239,16 +245,103 @@ export async function addExcelNode(filePath: string, targetPath: string, options
     return { path: `/${sheet.name}/row[${rowIndex}]`, cells: collectRowCells(sheet, rowIndex) };
   }
 
+  if (options.type === "validation" || options.type === "datavalidation") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const validation = addValidation(sheet, options.props);
+    await writeWorkbookState(filePath, state);
+    const validations = parseValidations(sheet.xml);
+    return { ...validation, ...(validation.type ? { validationType: validation.type } : {}), path: `/${sheet.name}/validation[${validations.length}]`, type: "validation" };
+  }
+
+  if (options.type === "comment" || options.type === "note") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const ref = (options.props.ref ?? options.props.cell ?? "").toUpperCase();
+    if (!ref) {
+      throw new UsageError("Excel comment requires --prop ref=A1 or --prop cell=A1.");
+    }
+    const comment = addComment(state, sheet, {
+      ref,
+      text: options.props.text ?? options.props.value ?? "",
+      author: options.props.author ?? "officekit",
+    });
+    await writeWorkbookState(filePath, state);
+    return { ...comment, path: `/${sheet.name}/comment[${getSheetComments(state, sheet).length}]`, type: "comment" };
+  }
+
+  if (options.type === "autofilter") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const range = (options.props.range ?? options.props.ref ?? "").toUpperCase();
+    if (!range) {
+      throw new UsageError("Excel add autofilter requires --prop range=SheetRange.", "Use: officekit add book.xlsx /Sheet1 --type autofilter --prop range=A1:B10");
+    }
+    sheet.autoFilter = range;
+    updateSheetXml(sheet);
+    await writeWorkbookState(filePath, state);
+    return { path: `/${sheet.name}/autofilter`, type: "autofilter", range };
+  }
+
+  if (options.type === "rowbreak" || options.type === "colbreak" || options.type === "pagebreak") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const requestedKind = options.type === "pagebreak"
+      ? ((options.props.col ?? options.props.column) !== undefined ? "colbreak" : "rowbreak")
+      : options.type;
+    const numericValue = requestedKind === "colbreak"
+      ? Number(options.props.col ?? options.props.column ?? options.props.id ?? "")
+      : Number(options.props.row ?? options.props.id ?? "");
+    if (!Number.isFinite(numericValue) || numericValue < 1) {
+      throw new UsageError(
+        requestedKind === "colbreak" ? "Excel add colbreak requires --prop col=<number>." : "Excel add rowbreak requires --prop row=<number>.",
+      );
+    }
+    if (requestedKind === "colbreak") {
+      sheet.colBreaks = [...new Set([...(sheet.colBreaks ?? []), numericValue])].sort((a, b) => a - b);
+      updateSheetXml(sheet);
+      await writeWorkbookState(filePath, state);
+      return { path: `/${sheet.name}/colbreak[${sheet.colBreaks.indexOf(numericValue) + 1}]`, type: "colbreak", id: numericValue, manual: true };
+    }
+    sheet.rowBreaks = [...new Set([...(sheet.rowBreaks ?? []), numericValue])].sort((a, b) => a - b);
+    updateSheetXml(sheet);
+    await writeWorkbookState(filePath, state);
+    return { path: `/${sheet.name}/rowbreak[${sheet.rowBreaks.indexOf(numericValue) + 1}]`, type: "rowbreak", id: numericValue, manual: true };
+  }
+
+  if (options.type === "table" || options.type === "listobject") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const table = addTable(state, sheet, options.props);
+    await writeWorkbookState(filePath, state);
+    return { ...table, path: `/${sheet.name}/table[${getSheetTables(state, sheet).length}]`, type: "table" };
+  }
+
+  if (options.type === "sparkline") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const location = (options.props.location ?? options.props.cell ?? options.props.ref ?? "").toUpperCase();
+    if (!location) {
+      throw new UsageError("Excel sparkline requires --prop cell=C2 or --prop location=C2.");
+    }
+    const sourceRange = options.props.sourceRange ?? options.props.sourcerange ?? options.props.range ?? options.props.data;
+    if (!sourceRange) {
+      throw new UsageError("Excel sparkline requires --prop range=A1:B1 or --prop sourceRange=A1:B1.");
+    }
+    const sparkline = addSparkline(sheet, {
+      location,
+      sourceRange: sourceRange.includes("!") ? sourceRange : `${sheet.name}!${sourceRange}`,
+      type: options.props.type?.toLowerCase(),
+    });
+    await writeWorkbookState(filePath, state);
+    return { ...sparkline, ...(sparkline.type ? { sparklineType: sparkline.type } : {}), path: `/${sheet.name}/sparkline[${parseSparklines(sheet.xml).length}]`, type: "sparkline" };
+  }
+
   if (options.type !== "cell") {
     throw new UsageError(
-      "Excel add currently supports: sheet, row, cell, or namedrange.",
-      "Use / with --type sheet|namedrange, /Sheet1 with --type row, or /Sheet1 with --type cell.",
+      "Excel add currently supports: sheet, row, cell, namedrange, validation, comment, autofilter, rowbreak, colbreak, table, or sparkline.",
+      "Use / with --type sheet|namedrange, or /Sheet1 with --type row|cell|validation|comment|autofilter|rowbreak|colbreak|table|sparkline.",
     );
   }
 
   const sheet = ensureSheetState(state, normalizeSheetPath(targetPath) || options.props.sheet || "Sheet1");
   const ref = (options.props.ref ?? options.props.cell ?? "A1").toUpperCase();
   sheet.cells[ref] = mergeExcelCell(sheet.cells[ref], options.props);
+  applyCellStyleProps(state, sheet.cells[ref], options.props);
   updateSheetXml(sheet);
   await writeWorkbookState(filePath, state);
   return materializeCellNode(sheet, ref);
@@ -409,9 +502,11 @@ export async function setExcelNode(filePath: string, targetPath: string, options
   if (range.includes(":")) {
     for (const ref of expandRange(range)) {
       sheet.cells[ref] = mergeExcelCell(sheet.cells[ref], options.props);
+      applyCellStyleProps(state, sheet.cells[ref], options.props);
     }
   } else {
     sheet.cells[range] = mergeExcelCell(sheet.cells[range], options.props);
+    applyCellStyleProps(state, sheet.cells[range], options.props);
   }
   updateSheetXml(sheet);
   await writeWorkbookState(filePath, state);
@@ -800,7 +895,7 @@ async function writeWorkbookState(filePath: string, state: ExcelWorkbookState) {
   state.zip.set(state.workbookEntryName, Buffer.from(state.workbookXml, "utf8"));
   state.zip.set(state.workbookRelsEntryName, Buffer.from(state.workbookRelsXml, "utf8"));
   state.zip.set("[Content_Types].xml", Buffer.from(buildContentTypesXml(state), "utf8"));
-  state.zip.set("_rels/.rels", Buffer.from(buildRootRelsXml(), "utf8"));
+  state.zip.set("_rels/.rels", Buffer.from(buildRootRelsXml(state), "utf8"));
   state.zip.set(METADATA_PATH, Buffer.from(JSON.stringify({
     product: "officekit",
     lineage: LINEAGE,
@@ -833,6 +928,9 @@ async function writeWorkbookState(filePath: string, state: ExcelWorkbookState) {
   }, null, 2), "utf8"));
   if (!state.zip.has("docProps/core.xml")) {
     state.zip.set("docProps/core.xml", Buffer.from(buildCorePropertiesXml(state.metadata), "utf8"));
+  }
+  if (state.styleSheetXml) {
+    state.zip.set("xl/styles.xml", Buffer.from(state.styleSheetXml, "utf8"));
   }
   for (const sheet of state.sheets) {
     state.zip.set(sheet.entryName, Buffer.from(sheet.xml, "utf8"));
@@ -1008,7 +1106,17 @@ function materializeRangeNode(sheet: ExcelSheetModel, range: string) {
 
 function materializeCellNode(sheet: ExcelSheetModel, ref: string) {
   const cell = sheet.cells[ref];
-  return cell ? { path: `/${sheet.name}/${ref}`, ref, type: "cell", ...cell } : { path: `/${sheet.name}/${ref}`, ref, type: "cell", value: null };
+  if (!cell) {
+    return { path: `/${sheet.name}/${ref}`, ref, type: "cell", value: null };
+  }
+  const evaluatedValue = cell.formula && cell.value === "" ? evaluateFormulaForDisplay(sheet, ref) : undefined;
+  return {
+    path: `/${sheet.name}/${ref}`,
+    ref,
+    type: "cell",
+    ...cell,
+    ...(evaluatedValue !== undefined ? { evaluatedValue } : {}),
+  };
 }
 
 function resolveNamedRangeNode(state: ExcelWorkbookState, targetPath: string) {
@@ -1270,7 +1378,12 @@ function renderTextView(state: ExcelWorkbookState) {
       rowMap.set(row, byRow);
     }
     for (const [rowIndex, cells] of [...rowMap.entries()].sort(([a], [b]) => a - b)) {
-      const ordered = [...cells.entries()].sort(([a], [b]) => columnNameToIndex(a) - columnNameToIndex(b)).map(([, cell]) => formatCellDisplayValue(cell));
+      const ordered = [...cells.entries()]
+        .sort(([a], [b]) => columnNameToIndex(a) - columnNameToIndex(b))
+        .map(([column]) => {
+          const materialized = materializeCellNode(sheet, `${column}${rowIndex}`) as { value?: string | null; evaluatedValue?: string };
+          return materialized.evaluatedValue ?? materialized.value ?? "";
+        });
       lines.push(`[/${sheet.name}/row[${rowIndex}]] ${ordered.join("\t")}`);
     }
   }
@@ -1283,9 +1396,10 @@ function renderAnnotatedView(state: ExcelWorkbookState) {
     lines.push(`=== Sheet: ${sheet.name} ===`);
     for (const ref of Object.keys(sheet.cells).sort(compareCellRefs)) {
       const cell = sheet.cells[ref];
-      const value = formatCellDisplayValue(cell);
+      const materialized = materializeCellNode(sheet, ref) as { value?: string | null; evaluatedValue?: string };
+      const value = materialized.evaluatedValue ?? materialized.value ?? "";
       const annotation = cell.formula ? `=${cell.formula}` : cell.type ?? "number";
-      const warn = !cell.value && !cell.formula ? " empty" : "";
+      const warn = !cell.value && !cell.formula ? " empty" : cell.formula && value === "" ? " unevaluated-formula" : "";
       lines.push(`  ${ref}: [${value}] <- ${annotation}${warn ? ` !${warn}` : ""}`);
     }
   }
@@ -1438,6 +1552,137 @@ function mergeValidation(existing: ExcelValidationModel, props: Record<string, s
   return next;
 }
 
+function addValidation(sheet: ExcelSheetModel, props: Record<string, string>) {
+  const sqref = props.sqref ?? props.ref;
+  if (!sqref) {
+    throw new UsageError("Excel validation requires --prop sqref or --prop ref.");
+  }
+  const base: ExcelValidationModel = {
+    sqref,
+    allowBlank: props.allowBlank === undefined && props.allowblank === undefined ? true : undefined,
+    showError: props.showError === undefined && props.showerror === undefined ? true : undefined,
+    showInput: props.showInput === undefined && props.showinput === undefined ? true : undefined,
+  };
+  const validation = mergeValidation(
+    base,
+    Object.fromEntries(Object.entries(props).filter(([key]) => !["sqref", "ref"].includes(key.toLowerCase()))),
+  );
+  const validations = parseValidations(sheet.xml);
+  validations.push(validation);
+  sheet.xml = replaceSheetValidations(sheet.xml, validations);
+  return validation;
+}
+
+function addComment(state: ExcelWorkbookState, sheet: ExcelSheetModel, props: Record<string, string>) {
+  const ref = (props.ref ?? props.cell ?? "").toUpperCase();
+  if (!ref) {
+    throw new UsageError("Excel comment requires --prop ref=A1 or --prop cell=A1.");
+  }
+  const nextComment: ExcelCommentModel = {
+    ref,
+    text: props.text ?? props.value ?? "",
+    author: props.author ?? "officekit",
+  };
+  let commentsPath = resolveCommentsPath(state, sheet);
+  if (!commentsPath) {
+    commentsPath = nextIndexedPartPath(state.zip, "xl/comments", ".xml");
+    state.zip.set(commentsPath, Buffer.from(renderCommentsXml([]), "utf8"));
+    appendRelationship(
+      state.zip,
+      getRelationshipsEntryName(sheet.entryName),
+      sheet.entryName,
+      commentsPath,
+      "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+    );
+  }
+  const comments = getSheetComments(state, sheet);
+  comments.push(nextComment);
+  state.zip.set(commentsPath, Buffer.from(renderCommentsXml(comments), "utf8"));
+  return nextComment;
+}
+
+function addTable(
+  state: ExcelWorkbookState,
+  sheet: ExcelSheetModel,
+  props: Record<string, string>,
+) {
+  const ref = (props.ref ?? props.range ?? "").toUpperCase();
+  if (!ref) {
+    throw new UsageError("Excel table requires --prop ref=A1:B5 or --prop range=A1:B5.");
+  }
+  const [startRef, endRef = startRef] = ref.split(":");
+  const startAddress = parseCellAddress(startRef);
+  const endAddress = parseCellAddress(endRef);
+  const columnCount = Math.max(1, columnNameToIndex(endAddress.column) - columnNameToIndex(startAddress.column) + 1);
+  const existingIds = [...state.zip.keys()]
+    .filter((name) => /^xl\/tables\/table\d+\.xml$/i.test(name))
+    .map((name) => Number(/table(\d+)\.xml$/i.exec(name)?.[1] ?? "0"));
+  const tableId = (existingIds.length > 0 ? Math.max(...existingIds) : 0) + 1;
+  const tableEntry = nextIndexedPartPath(state.zip, "xl/tables/table", ".xml");
+  const name = props.name ?? `Table${tableId}`;
+  const displayName = props.displayName ?? props.displayname ?? name;
+  const styleName = props.style ?? props.stylename ?? "TableStyleMedium2";
+  const headerRow = props.headerRow === undefined && props.headerrow === undefined ? true : isTruthy(props.headerRow ?? props.headerrow ?? "false");
+  const totalsRow = isTruthy(props.totalRow ?? props.totalrow ?? props.totalsrow ?? "false");
+  const columnNames = resolveTableColumnNames(sheet, props, startAddress, columnCount, headerRow);
+  state.zip.set(
+    tableEntry,
+    Buffer.from(renderTableXml({ id: tableId, name, displayName, ref, styleName, headerRow, totalsRow, columnNames }), "utf8"),
+  );
+  sheet.xml = ensureWorksheetNamespaces(sheet.xml, {
+    r: "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+  });
+  const relId = appendRelationship(
+    state.zip,
+    getRelationshipsEntryName(sheet.entryName),
+    sheet.entryName,
+    tableEntry,
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table",
+  );
+  sheet.xml = upsertTablePartReference(sheet.xml, relId);
+  return {
+    name,
+    displayName,
+    ref,
+    headerRow,
+    totalsRow,
+    styleName,
+    path: path.posix.relative(path.posix.dirname(sheet.entryName), tableEntry),
+  };
+}
+
+function addSparkline(sheet: ExcelSheetModel, props: Record<string, string>) {
+  const location = (props.location ?? props.cell ?? props.ref ?? "").toUpperCase();
+  if (!location) {
+    throw new UsageError("Excel sparkline requires --prop cell=C2 or --prop location=C2.");
+  }
+  const rawSourceRange = props.sourceRange ?? props.sourcerange ?? props.range ?? props.data;
+  if (!rawSourceRange) {
+    throw new UsageError("Excel sparkline requires --prop range=A1:B1 or --prop sourceRange=A1:B1.");
+  }
+  const sourceRange = rawSourceRange.includes("!") ? rawSourceRange : `${sheet.name}!${rawSourceRange}`;
+  const type = (props.type ?? "line").toLowerCase();
+  const sparklineXml = `<x14:sparklineGroup${type !== "line" ? ` type="${escapeXml(type)}"` : ""}><x14:sparklines><x14:sparkline><xm:f>${escapeXml(sourceRange)}</xm:f><xm:sqref>${escapeXml(location)}</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup>`;
+  sheet.xml = ensureWorksheetNamespaces(sheet.xml, {
+    x14: "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main",
+    xm: "http://schemas.microsoft.com/office/excel/2006/main",
+  });
+  if (/<x14:sparklineGroups>/.test(sheet.xml)) {
+    sheet.xml = sheet.xml.replace(/<\/x14:sparklineGroups>/, `${sparklineXml}</x14:sparklineGroups>`);
+  } else if (/<(?:\w+:)?extLst>/.test(sheet.xml)) {
+    sheet.xml = sheet.xml.replace(
+      /<\/(?:\w+:)?extLst>/,
+      `<ext uri="{05C60535-1F16-4fd2-B633-E4A46CF9E463}"><x14:sparklineGroups>${sparklineXml}</x14:sparklineGroups></ext></extLst>`,
+    );
+  } else {
+    sheet.xml = sheet.xml.replace(
+      /<\/(?:\w+:)?worksheet>/,
+      `<extLst><ext uri="{05C60535-1F16-4fd2-B633-E4A46CF9E463}"><x14:sparklineGroups>${sparklineXml}</x14:sparklineGroups></ext></extLst></worksheet>`,
+    );
+  }
+  return parseSparklines(sheet.xml).at(-1)!;
+}
+
 function setComment(state: ExcelWorkbookState, sheet: ExcelSheetModel, index: number, props: Record<string, string>) {
   const commentsPath = resolveCommentsPath(state, sheet);
   if (!commentsPath) {
@@ -1557,12 +1802,45 @@ function setChart(
       }
     }
     xml = xml.replace(series[0], nextSeries);
-  } else if (props.title !== undefined || props.name !== undefined || props.text !== undefined) {
-    const value = props.title ?? props.name ?? props.text ?? "";
-    if (/<c:title>[\s\S]*?<\/c:title>/.test(xml)) {
-      xml = xml.replace(/<c:title>[\s\S]*?<\/c:title>/, `<c:title><c:tx><c:rich><a:p><a:r><a:t>${escapeXml(value)}</a:t></a:r></a:p></c:rich></c:tx></c:title>`);
-    } else {
-      xml = xml.replace(/<c:chart\b[^>]*>/, `$&<c:title><c:tx><c:rich><a:p><a:r><a:t>${escapeXml(value)}</a:t></a:r></a:p></c:rich></c:tx></c:title>`);
+  } else {
+    if (props.title !== undefined || props.name !== undefined || props.text !== undefined) {
+      const value = props.title ?? props.name ?? props.text ?? "";
+      if (/<c:title>[\s\S]*?<\/c:title>/.test(xml)) {
+        xml = xml.replace(/<c:title>[\s\S]*?<\/c:title>/, `<c:title><c:tx><c:rich><a:p><a:r><a:t>${escapeXml(value)}</a:t></a:r></a:p></c:rich></c:tx></c:title>`);
+      } else {
+        xml = xml.replace(/<c:chart\b[^>]*>/, `$&<c:title><c:tx><c:rich><a:p><a:r><a:t>${escapeXml(value)}</a:t></a:r></a:p></c:rich></c:tx></c:title>`);
+      }
+    }
+    if (props.legend !== undefined) {
+      const normalized = props.legend.toLowerCase();
+      if (normalized === "false" || normalized === "none") {
+        xml = xml.replace(/<c:legend\b[\s\S]*?<\/c:legend>/, "");
+      } else {
+        const legendPositionMap: Record<string, string> = { top: "t", left: "l", right: "r", bottom: "b" };
+        const legendXml = `<c:legend><c:legendPos val="${legendPositionMap[normalized] ?? "b"}"/><c:overlay val="0"/></c:legend>`;
+        if (/<c:legend\b[\s\S]*?<\/c:legend>/.test(xml)) {
+          xml = xml.replace(/<c:legend\b[\s\S]*?<\/c:legend>/, legendXml);
+        } else {
+          xml = xml.replace(/<\/c:plotArea>/, `</c:plotArea>${legendXml}`);
+        }
+      }
+    }
+    if (props.datalabels !== undefined || props.labels !== undefined) {
+      const value = (props.datalabels ?? props.labels ?? "").toLowerCase();
+      const dataLabelsXml = value === "none"
+        ? ""
+        : `<c:dLbls><c:showLegendKey val="0"/><c:showValue val="${value.includes("value") || value === "true" ? 1 : 0}"/><c:showCategoryName val="${value.includes("category") ? 1 : 0}"/><c:showSeriesName val="${value.includes("series") ? 1 : 0}"/><c:showPercent val="${value.includes("percent") ? 1 : 0}"/></c:dLbls>`;
+      if (/<c:dLbls\b[\s\S]*?<\/c:dLbls>/.test(xml)) {
+        xml = xml.replace(/<c:dLbls\b[\s\S]*?<\/c:dLbls>/, dataLabelsXml);
+      } else if (dataLabelsXml) {
+        xml = xml.replace(/(<c:(?:barChart|lineChart|pieChart|areaChart)\b[\s\S]*?<c:ser\b[\s\S]*?<\/c:ser>)/, `$1${dataLabelsXml}`);
+      }
+    }
+    if (props.categoryAxisTitle !== undefined || props.cataxistitle !== undefined) {
+      xml = setAxisTitle(xml, "catAx", props.categoryAxisTitle ?? props.cataxistitle ?? "");
+    }
+    if (props.valueAxisTitle !== undefined || props.valaxistitle !== undefined) {
+      xml = setAxisTitle(xml, "valAx", props.valueAxisTitle ?? props.valaxistitle ?? "");
     }
   }
   state.zip.set(xmlPath, Buffer.from(xml, "utf8"));
@@ -1612,6 +1890,22 @@ function setPivotTable(state: ExcelWorkbookState, sheet: ExcelSheetModel, index:
         .map(([propKey]) => [propKey, isTruthy(props[propKey] ?? props[propKey.toLowerCase()] ?? "false")]),
     ),
   };
+}
+
+function setAxisTitle(xml: string, axisTag: "catAx" | "valAx", title: string) {
+  const axisPattern = new RegExp(`<c:${axisTag}\\b([\\s\\S]*?)<\\/c:${axisTag}>`);
+  const axisMatch = axisPattern.exec(xml);
+  if (!axisMatch) {
+    return xml;
+  }
+  const axisXml = axisMatch[0];
+  const titleXml = title
+    ? `<c:title><c:tx><c:rich><a:p><a:r><a:t>${escapeXml(title)}</a:t></a:r></a:p></c:rich></c:tx></c:title>`
+    : "";
+  const nextAxisXml = /<c:title>[\s\S]*?<\/c:title>/.test(axisXml)
+    ? axisXml.replace(/<c:title>[\s\S]*?<\/c:title>/, titleXml)
+    : axisXml.replace(/>/, `>${titleXml}`);
+  return xml.replace(axisXml, nextAxisXml);
 }
 
 function setDrawingObject(
@@ -1970,10 +2264,19 @@ function getSheetCharts(state: ExcelWorkbookState, sheet: ExcelSheetModel) {
     const rel = drawingRels.find((relationship) => relationship.id === match[1]);
     const chartPath = rel ? normalizeZipPath(path.posix.dirname(drawingPath), rel.target) : undefined;
     const chartXml = chartPath ? requireEntry(state.zip, chartPath) : "";
+    const seriesNames = [...chartXml.matchAll(/<c:ser\b[\s\S]*?<c:tx>[\s\S]*?<c:v>([\s\S]*?)<\/c:v>[\s\S]*?<\/c:tx>[\s\S]*?<\/c:ser>/g)].map((seriesMatch) => decodeXml(seriesMatch[1]).trim());
+    const legendPos = /<c:legendPos\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
+    const dataLabels = /<c:dLbls\b[\s\S]*?<(?:c:showValue)\b[^>]*val="([^"]+)"/.exec(chartXml)?.[1];
     return {
       path: rel?.target ?? "",
       sheet: sheet.name,
-      title: extractTexts(chartXml).join("").trim() || undefined,
+      title: decodeXml(/<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() || undefined,
+      ...(chartXml.includes("<c:barChart") ? { chartType: "bar" } : chartXml.includes("<c:lineChart") ? { chartType: "line" } : chartXml.includes("<c:pieChart") ? { chartType: "pie" } : chartXml.includes("<c:areaChart") ? { chartType: "area" } : {}),
+      ...(legendPos ? { legend: legendPos } : chartXml.includes("<c:legend") ? { legend: true } : {}),
+      ...(dataLabels ? { dataLabels: isTruthy(dataLabels) ? "value" : "none" } : {}),
+      ...(decodeXml(/<c:catAx\b[\s\S]*?<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() ? { categoryAxisTitle: decodeXml(/<c:catAx\b[\s\S]*?<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() } : {}),
+      ...(decodeXml(/<c:valAx\b[\s\S]*?<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() ? { valueAxisTitle: decodeXml(/<c:valAx\b[\s\S]*?<c:title>[\s\S]*?<a:t>([\s\S]*?)<\/a:t>[\s\S]*?<\/c:title>/.exec(chartXml)?.[1] ?? "").trim() } : {}),
+      ...(seriesNames.length > 0 ? { seriesNames } : {}),
     };
   });
 }
@@ -2116,6 +2419,43 @@ function mergeExcelCell(existing: ExcelCellModel | undefined, props: Record<stri
   };
 }
 
+function applyCellStyleProps(state: ExcelWorkbookState, cell: ExcelCellModel, props: Record<string, string>) {
+  if (!hasStyleProps(props)) {
+    return;
+  }
+  const styleId = registerStyle(state, props);
+  cell.styleId = String(styleId);
+}
+
+function hasStyleProps(props: Record<string, string>) {
+  return Object.keys(props).some((key) => {
+    const lower = key.toLowerCase();
+    return lower === "fill"
+      || lower === "numfmt"
+      || lower === "format"
+      || lower === "numberformat"
+      || lower.startsWith("font.")
+      || lower.startsWith("alignment.");
+  });
+}
+
+function registerStyle(state: ExcelWorkbookState, props: Record<string, string>) {
+  const stylesheet = parseStylesheet(state.styleSheetXml ?? buildDefaultStylesheetXml());
+  const fontXml = buildFontXml(props);
+  const fillXml = buildFillXml(props);
+  const borderXml = `<border><left/><right/><top/><bottom/><diagonal/></border>`;
+  const numFmtCode = props.numFmt ?? props.numfmt ?? props.format ?? props.numberformat;
+  const numFmtId = numFmtCode ? ensureNumFmt(stylesheet, numFmtCode) : 0;
+  const fontId = ensureFragment(stylesheet.fonts, fontXml, `<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>`);
+  const fillId = ensureFragment(stylesheet.fills, fillXml, `<fill><patternFill patternType="none"/></fill>`);
+  const borderId = ensureFragment(stylesheet.borders, borderXml, `<border><left/><right/><top/><bottom/><diagonal/></border>`);
+  const alignmentXml = buildAlignmentXml(props);
+  const xfXml = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"${numFmtId ? ' applyNumberFormat="1"' : ''}${fontXml !== DEFAULT_FONT_XML ? ' applyFont="1"' : ''}${fillXml !== DEFAULT_FILL_XML ? ' applyFill="1"' : ''}${alignmentXml ? ' applyAlignment="1"' : ''}>${alignmentXml}</xf>`;
+  const xfId = ensureFragment(stylesheet.cellXfs, xfXml, `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>`);
+  state.styleSheetXml = serializeStylesheet(stylesheet);
+  return xfId;
+}
+
 function normalizeExcelCell(cell: ExcelCellModel | undefined): ExcelCellModel {
   return {
     value: cell?.value ?? "",
@@ -2125,15 +2465,126 @@ function normalizeExcelCell(cell: ExcelCellModel | undefined): ExcelCellModel {
   };
 }
 
-function formatCellDisplayValue(cell: ExcelCellModel) {
+function formatCellDisplayValue(cell: ExcelCellModel, evaluate?: () => string | undefined) {
   if (cell.type === "boolean") {
     return cell.value === "1" ? "TRUE" : "FALSE";
+  }
+  if (cell.formula && cell.value === "" && evaluate) {
+    return evaluate() ?? "";
   }
   return cell.value;
 }
 
 function normalizeFormula(formula: string) {
   return formula.replace(/^=/, "");
+}
+
+function evaluateFormulaForDisplay(sheet: ExcelSheetModel, ref: string) {
+  const visited = new Set<string>();
+  const numeric = evaluateFormulaExpression(sheet, ref, visited);
+  if (numeric === undefined || Number.isNaN(numeric)) {
+    return undefined;
+  }
+  return Number.isInteger(numeric) ? String(numeric) : String(Number(numeric.toFixed(10)));
+}
+
+function evaluateFormulaExpression(sheet: ExcelSheetModel, ref: string, visited: Set<string>): number | undefined {
+  const key = `${sheet.name}!${ref}`;
+  if (visited.has(key)) {
+    return undefined;
+  }
+  visited.add(key);
+  const cell = sheet.cells[ref];
+  if (!cell) {
+    visited.delete(key);
+    return 0;
+  }
+  if (!cell.formula) {
+    const value = coerceCellToNumber(cell);
+    visited.delete(key);
+    return value;
+  }
+
+  let expression = normalizeFormula(cell.formula);
+  const aggregateMatch = /^(SUM|AVERAGE|MIN|MAX)\(([^()]+)\)$/i.exec(expression.trim());
+  if (aggregateMatch) {
+    const result = foldFormulaArgs(aggregateMatch[2], sheet, visited, aggregateMatch[1].toUpperCase() === "SUM"
+      ? (values) => values.reduce((sum, value) => sum + value, 0)
+      : aggregateMatch[1].toUpperCase() === "AVERAGE"
+        ? (values) => values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
+        : aggregateMatch[1].toUpperCase() === "MIN"
+          ? (values) => values.length > 0 ? Math.min(...values) : 0
+          : (values) => values.length > 0 ? Math.max(...values) : 0);
+    visited.delete(key);
+    return result;
+  }
+  const functionEvaluators: Record<string, (args: string) => number | undefined> = {
+    SUM: (args) => foldFormulaArgs(args, sheet, visited, (values) => values.reduce((sum, value) => sum + value, 0)),
+    AVERAGE: (args) => foldFormulaArgs(args, sheet, visited, (values) => values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0),
+    MIN: (args) => foldFormulaArgs(args, sheet, visited, (values) => values.length > 0 ? Math.min(...values) : 0),
+    MAX: (args) => foldFormulaArgs(args, sheet, visited, (values) => values.length > 0 ? Math.max(...values) : 0),
+  };
+
+  let replaced = true;
+  while (replaced) {
+    replaced = false;
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX)\(([^()]*)\)/gi, (match, fn, args) => {
+      const result = functionEvaluators[fn.toUpperCase()]?.(args);
+      if (result === undefined) {
+        return match;
+      }
+      replaced = true;
+      return String(result);
+    });
+  }
+
+  expression = expression.replace(/\b([A-Z]+[0-9]+)\b/g, (match, refValue) => {
+    const value = evaluateFormulaExpression(sheet, refValue.toUpperCase(), visited);
+    return value === undefined ? match : String(value);
+  });
+
+  visited.delete(key);
+  if (!/^[0-9+\-*/().,\s]+$/.test(expression)) {
+    return undefined;
+  }
+  try {
+    // eslint-disable-next-line no-new-func
+    const result = Function(`return (${expression});`)();
+    return typeof result === "number" && Number.isFinite(result) ? result : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function foldFormulaArgs(
+  args: string,
+  sheet: ExcelSheetModel,
+  visited: Set<string>,
+  reducer: (values: number[]) => number,
+) {
+  const values = args
+    .split(",")
+    .flatMap((part) => {
+      const value = part.trim();
+      if (/^[A-Z]+[0-9]+:[A-Z]+[0-9]+$/i.test(value)) {
+        return expandRange(value.toUpperCase()).map((ref) => evaluateFormulaExpression(sheet, ref, visited)).filter((item): item is number => item !== undefined);
+      }
+      if (/^[A-Z]+[0-9]+$/i.test(value)) {
+        const evaluated = evaluateFormulaExpression(sheet, value.toUpperCase(), visited);
+        return evaluated !== undefined ? [evaluated] : [];
+      }
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? [numeric] : [];
+    });
+  return reducer(values);
+}
+
+function coerceCellToNumber(cell: ExcelCellModel) {
+  if (cell.type === "boolean") {
+    return cell.value === "1" ? 1 : 0;
+  }
+  const numeric = Number(cell.value);
+  return Number.isFinite(numeric) ? numeric : undefined;
 }
 
 function mergeWorkbookSettings(existing: ExcelWorkbookSettings | undefined, props: Record<string, string>): ExcelWorkbookSettings {
@@ -2167,6 +2618,108 @@ function renderWorkbookProperties(settings?: ExcelWorkbookSettings) {
     settings.dateCompatibility !== undefined ? `dateCompatibility="${settings.dateCompatibility ? 1 : 0}"` : "",
   ].filter(Boolean);
   return attrs.length > 0 ? `<workbookPr ${attrs.join(" ")}/>` : "";
+}
+
+const DEFAULT_FONT_XML = `<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>`;
+const DEFAULT_FILL_XML = `<fill><patternFill patternType="none"/></fill>`;
+
+interface ParsedStylesheet {
+  numFmts: string[];
+  fonts: string[];
+  fills: string[];
+  borders: string[];
+  cellXfs: string[];
+}
+
+function buildDefaultStylesheetXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1">${DEFAULT_FONT_XML}</fonts>
+  <fills count="2">${DEFAULT_FILL_XML}<fill><patternFill patternType="gray125"/></fill></fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+</styleSheet>`;
+}
+
+function parseStylesheet(xml: string): ParsedStylesheet {
+  return {
+    numFmts: extractStyleSection(xml, "numFmts", "numFmt"),
+    fonts: extractStyleSection(xml, "fonts", "font"),
+    fills: extractStyleSection(xml, "fills", "fill"),
+    borders: extractStyleSection(xml, "borders", "border"),
+    cellXfs: extractStyleSection(xml, "cellXfs", "xf"),
+  };
+}
+
+function extractStyleSection(xml: string, containerTag: string, itemTag: string) {
+  const section = new RegExp(`<${containerTag}\\b[^>]*>([\\s\\S]*?)<\\/${containerTag}>`).exec(xml)?.[1] ?? "";
+  return [...section.matchAll(new RegExp(`<${itemTag}\\b[\\s\\S]*?<\\/${itemTag}>|<${itemTag}\\b[^>]*/>`, "g"))].map((match) => match[0]);
+}
+
+function ensureFragment(collection: string[], fragment: string, fallback: string) {
+  const normalized = fragment || fallback;
+  const existing = collection.findIndex((item) => item === normalized);
+  if (existing >= 0) {
+    return existing;
+  }
+  collection.push(normalized);
+  return collection.length - 1;
+}
+
+function ensureNumFmt(stylesheet: ParsedStylesheet, formatCode: string) {
+  const existing = stylesheet.numFmts.findIndex((item) => new RegExp(`formatCode="${escapeXmlForRegex(escapeXml(formatCode))}"`).test(item));
+  if (existing >= 0) {
+    const id = /numFmtId="([^"]+)"/.exec(stylesheet.numFmts[existing])?.[1];
+    return Number(id ?? "164");
+  }
+  const nextId = Math.max(163, ...stylesheet.numFmts.map((item) => Number(/numFmtId="([^"]+)"/.exec(item)?.[1] ?? "163"))) + 1;
+  stylesheet.numFmts.push(`<numFmt numFmtId="${nextId}" formatCode="${escapeXml(formatCode)}"/>`);
+  return nextId;
+}
+
+function buildFontXml(props: Record<string, string>) {
+  const fontName = props["font.name"] ?? props.font ?? "Calibri";
+  const fontSize = props["font.size"] ?? "11";
+  const color = props["font.color"];
+  const bold = isTruthy(props["font.bold"] ?? "false");
+  const italic = isTruthy(props["font.italic"] ?? "false");
+  const underline = props["font.underline"];
+  const strike = isTruthy(props["font.strike"] ?? props["font.strikethrough"] ?? "false");
+  return `<font>${bold ? "<b/>" : ""}${italic ? "<i/>" : ""}${strike ? "<strike/>" : ""}${underline ? `<u${underline !== "true" ? ` val="${escapeXml(underline)}"` : ""}/>` : ""}<sz val="${escapeXml(fontSize)}"/>${color ? `<color rgb="${escapeXml(normalizeArgbColor(color))}"/>` : '<color theme="1"/>'}<name val="${escapeXml(fontName)}"/><family val="2"/></font>`;
+}
+
+function buildFillXml(props: Record<string, string>) {
+  const fill = props.fill ?? props.bgColor ?? props.bgcolor;
+  if (!fill) {
+    return DEFAULT_FILL_XML;
+  }
+  return `<fill><patternFill patternType="solid"><fgColor rgb="${escapeXml(normalizeArgbColor(fill))}"/><bgColor indexed="64"/></patternFill></fill>`;
+}
+
+function buildAlignmentXml(props: Record<string, string>) {
+  const horizontal = props["alignment.horizontal"] ?? props.halign;
+  const vertical = props["alignment.vertical"] ?? props.valign;
+  const wrapText = props["alignment.wrapText"] ?? props["alignment.wraptext"] ?? props.wrapText ?? props.wraptext;
+  const attrs = [
+    horizontal ? `horizontal="${escapeXml(horizontal)}"` : "",
+    vertical ? `vertical="${escapeXml(vertical)}"` : "",
+    wrapText !== undefined ? `wrapText="${isTruthy(wrapText) ? 1 : 0}"` : "",
+  ].filter(Boolean).join(" ");
+  return attrs ? `<alignment ${attrs}/>` : "";
+}
+
+function serializeStylesheet(stylesheet: ParsedStylesheet) {
+  const numFmts = stylesheet.numFmts.length > 0 ? `<numFmts count="${stylesheet.numFmts.length}">${stylesheet.numFmts.join("")}</numFmts>` : "";
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  ${numFmts}
+  <fonts count="${stylesheet.fonts.length}">${stylesheet.fonts.join("")}</fonts>
+  <fills count="${stylesheet.fills.length}">${stylesheet.fills.join("")}</fills>
+  <borders count="${stylesheet.borders.length}">${stylesheet.borders.join("")}</borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="${stylesheet.cellXfs.length}">${stylesheet.cellXfs.join("")}</cellXfs>
+</styleSheet>`;
 }
 
 function renderCalculationProperties(settings?: ExcelWorkbookSettings) {
@@ -2278,26 +2831,39 @@ function requireEntry(zip: Map<string, Buffer>, entryName: string) {
 }
 
 function buildContentTypesXml(state: ExcelWorkbookState) {
-  const sheetOverrides = state.sheets
-    .map((sheet) => `<Override PartName="/${sheet.entryName}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`)
+  const overrides: Array<[string, string]> = [
+    ...state.sheets.map((sheet) => [sheet.entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"] as [string, string]),
+  ];
+  for (const entryName of state.zip.keys()) {
+    const override = resolveContentTypeOverride(entryName);
+    if (override) overrides.push(override);
+  }
+  const seen = new Set<string>();
+  const overrideXml = overrides
+    .filter(([entryName]) => {
+      if (seen.has(entryName)) return false;
+      seen.add(entryName);
+      return true;
+    })
+    .map(([entryName, contentType]) => `<Override PartName="/${entryName}" ContentType="${contentType}"/>`)
     .join("\n  ");
-  const stylesOverride = state.styleSheetXml
-    ? '\n  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
-    : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-  ${sheetOverrides}
-  ${stylesOverride}
+  <Default Extension="json" ContentType="application/json"/>
+  ${overrideXml}
 </Types>`;
 }
 
-function buildRootRelsXml() {
+function buildRootRelsXml(state: ExcelWorkbookState) {
+  const extraRelationships = state.zip.has("docProps/core.xml")
+    ? '\n  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+    : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  ${extraRelationships}
 </Relationships>`;
 }
 
@@ -2455,6 +3021,118 @@ function getRelationshipsEntryName(entryName: string) {
   const directory = path.posix.dirname(entryName);
   const basename = path.posix.basename(entryName);
   return path.posix.join(directory, "_rels", `${basename}.rels`);
+}
+
+function ensureWorksheetNamespaces(xml: string, namespaces: Record<string, string>) {
+  return xml.replace(/<(?:\w+:)?worksheet\b([^>]*)>/, (match, attrs) => {
+    let next = match;
+    for (const [prefix, uri] of Object.entries(namespaces)) {
+      if (new RegExp(`xmlns:${prefix}=`).test(attrs)) continue;
+      next = next.replace(/>$/, ` xmlns:${prefix}="${uri}">`);
+    }
+    return next;
+  });
+}
+
+function nextIndexedPartPath(zip: Map<string, Buffer>, prefix: string, suffix: string) {
+  const pattern = new RegExp(`^${escapeXmlForRegex(prefix)}(\\d+)${escapeXmlForRegex(suffix)}$`, "i");
+  const nextIndex = [...zip.keys()]
+    .map((name) => Number(pattern.exec(name)?.[1] ?? "0"))
+    .reduce((max, value) => Math.max(max, value), 0) + 1;
+  return `${prefix}${nextIndex}${suffix}`;
+}
+
+function appendRelationship(
+  zip: Map<string, Buffer>,
+  relsPath: string,
+  ownerEntryName: string,
+  targetEntryName: string,
+  type: string,
+) {
+  const relsXml = zip.get(relsPath)?.toString("utf8") ?? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
+  const relationships = parseRelationshipEntries(relsXml);
+  const target = path.posix.relative(path.posix.dirname(ownerEntryName), targetEntryName).replace(/\\/g, "/");
+  const existing = relationships.find((relationship) => relationship.target === target && relationship.type === type);
+  if (existing) {
+    return existing.id;
+  }
+  const nextId = `rId${relationships.reduce((max, relationship) => Math.max(max, Number(/^rId(\d+)$/.exec(relationship.id)?.[1] ?? "0")), 0) + 1}`;
+  const nextXml = relsXml.replace(
+    /<\/Relationships>/,
+    `  <Relationship Id="${nextId}" Type="${type}" Target="${escapeXml(target)}"/>\n</Relationships>`,
+  );
+  zip.set(relsPath, Buffer.from(nextXml, "utf8"));
+  return nextId;
+}
+
+function resolveTableColumnNames(
+  sheet: ExcelSheetModel,
+  props: Record<string, string>,
+  startAddress: { column: string; row: number },
+  columnCount: number,
+  headerRow: boolean,
+) {
+  if (props.columns) {
+    const provided = props.columns.split(",").map((item) => item.trim()).filter(Boolean);
+    return Array.from({ length: columnCount }, (_, index) => provided[index] || `Column${index + 1}`);
+  }
+  return Array.from({ length: columnCount }, (_, index) => {
+    if (!headerRow) return `Column${index + 1}`;
+    const ref = `${indexToColumnName(columnNameToIndex(startAddress.column) + index)}${startAddress.row}`;
+    const text = sheet.cells[ref]?.value?.trim();
+    return text || `Column${index + 1}`;
+  });
+}
+
+function renderTableXml(input: {
+  id: number;
+  name: string;
+  displayName: string;
+  ref: string;
+  styleName: string;
+  headerRow: boolean;
+  totalsRow: boolean;
+  columnNames?: string[];
+  columns?: string[];
+}) {
+  const columnNames = input.columnNames ?? input.columns ?? ["Column1"];
+  const totalAttrs = input.totalsRow ? ' totalsRowShown="1" totalsRowCount="1"' : ' totalsRowShown="0"';
+  const headerAttr = ` headerRowCount="${input.headerRow ? 1 : 0}"`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${input.id}" name="${escapeXml(input.name)}" displayName="${escapeXml(input.displayName)}" ref="${escapeXml(input.ref)}"${totalAttrs}${headerAttr}>
+  <autoFilter ref="${escapeXml(input.ref)}"/>
+  <tableColumns count="${columnNames.length}">
+    ${columnNames.map((columnName, index) => `<tableColumn id="${index + 1}" name="${escapeXml(columnName)}"/>`).join("")}
+  </tableColumns>
+  <tableStyleInfo name="${escapeXml(input.styleName)}" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>
+</table>`;
+}
+
+function upsertTablePartReference(sheetXml: string, relId: string) {
+  const existing = [...sheetXml.matchAll(/<(?:\w+:)?tablePart\b[^>]*r:id="([^"]+)"[^>]*\/?>/g)].map((match) => match[1]);
+  const nextIds = existing.includes(relId) ? existing : [...existing, relId];
+  const tablePartsXml = nextIds.length > 0
+    ? `<tableParts count="${nextIds.length}">${nextIds.map((id) => `<tablePart r:id="${escapeXml(id)}"/>`).join("")}</tableParts>`
+    : "";
+  return replaceOrInsert(
+    sheetXml,
+    /<(?:\w+:)?tableParts\b[\s\S]*?<\/(?:\w+:)?tableParts>/,
+    tablePartsXml,
+    /<(?:\w+:)?drawing\b[^>]*\/?>|<(?:\w+:)?extLst\b[\s\S]*?<\/(?:\w+:)?extLst>|<(?:\w+:)?colBreaks\b[\s\S]*?<\/(?:\w+:)?colBreaks>|<(?:\w+:)?rowBreaks\b[\s\S]*?<\/(?:\w+:)?rowBreaks>|<(?:\w+:)?headerFooter\b[\s\S]*?<\/(?:\w+:)?headerFooter>|<(?:\w+:)?pageSetup\b[^>]*\/?>|<(?:\w+:)?sheetProtection\b[^>]*\/?>|<(?:\w+:)?autoFilter\b[^>]*\/?>|<(?:\w+:)?sheetData\b[\s\S]*?<\/(?:\w+:)?sheetData>/,
+  );
+}
+
+function resolveContentTypeOverride(entryName: string) {
+  if (entryName === "xl/workbook.xml") return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"] as [string, string];
+  if (entryName === "xl/styles.xml") return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"] as [string, string];
+  if (entryName === "xl/sharedStrings.xml") return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"] as [string, string];
+  if (entryName === "docProps/core.xml") return [entryName, "application/vnd.openxmlformats-package.core-properties+xml"] as [string, string];
+  if (/^xl\/comments\d+\.xml$/i.test(entryName)) return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"] as [string, string];
+  if (/^xl\/tables\/table\d+\.xml$/i.test(entryName)) return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"] as [string, string];
+  if (/^xl\/drawings\/drawing\d+\.xml$/i.test(entryName)) return [entryName, "application/vnd.openxmlformats-officedocument.drawing+xml"] as [string, string];
+  if (/^xl\/charts\/chart\d+\.xml$/i.test(entryName)) return [entryName, "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"] as [string, string];
+  if (/^xl\/pivotTables\/pivotTable\d+\.xml$/i.test(entryName)) return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"] as [string, string];
+  return undefined;
 }
 
 function normalizeCalcMode(value: string) {
