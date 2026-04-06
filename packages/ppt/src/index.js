@@ -27,3 +27,18 @@ export * from "./layouts.js";
 
 // Notes management
 export * from "./notes.js";
+
+// Core mutations (Set, Remove, Swap, CopyFrom, Raw, Batch)
+export * from "./mutations.js";
+
+// Shape mutations
+export * from "./shapes.js";
+
+// Table mutations
+export * from "./tables.js";
+
+// Query and get operations
+export * from "./query.js";
+
+// View operations (ViewAsText, ViewAsAnnotated, ViewAsOutline, ViewAsStats, ViewAsIssues)
+export * from "./views.js";
