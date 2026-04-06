@@ -412,7 +412,7 @@ function buildChildPath(parentPath: string, segments: PathSegment[]): string {
 function getRunsFromParagraph(documentXml: string, paraIndex: number): DocumentNode[] {
   const runs: DocumentNode[] = [];
 
-  const paraRegex = /<w:p[\s\S]*?<\/w:p>/g;
+  const paraRegex = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi;
   let match;
   let idx = 0;
 
@@ -421,7 +421,7 @@ function getRunsFromParagraph(documentXml: string, paraIndex: number): DocumentN
     if (idx !== paraIndex) continue;
 
     const paraXml = match[0];
-    const runRegex = /<w:r[\s\S]*?<\/w:r>/g;
+    const runRegex = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/gi;
     let runMatch;
     let runIdx = 0;
 
@@ -1572,6 +1572,7 @@ function createFooterXml(properties: Record<string, string> = {}): string {
 
 /**
  * Helper: Insert XML at position
+ * Handles paragraphs, tables, and other body children with index-based positioning
  */
 function insertAtPosition(docXml: string, insertXml: string, position: string | number | undefined): string {
   // Handle "find:" prefix for text-based anchoring
@@ -1601,23 +1602,38 @@ function insertAtPosition(docXml: string, insertXml: string, position: string | 
     return docXml.slice(0, bodyClose) + insertXml + docXml.slice(bodyClose);
   }
 
-  // Insert at specific index
-  const paras = bodyMatch[1].match(/<w:p[>\s]/g) || [];
-  if (typeof position === "number" && position >= paras.length) {
-    return docXml.slice(0, bodyClose) + insertXml + docXml.slice(bodyClose);
+  // Insert at specific index - find all body children (paragraphs, tables, etc.)
+  const bodyContent = bodyMatch[1];
+  const childElements: { type: string; start: number; end: number }[] = [];
+
+  // Match all top-level body children: paragraphs, tables, sectPr, etc.
+  const elementRegex = /<(w:p\b[^>]*>[\s\S]*?<\/w:p>|w:tbl\b[^>]*>[\s\S]*?<\/w:tbl>|w:sectPr\b[^>]*>[\s\S]*?<\/w:sectPr>|w:customXml\b[^>]*>[\s\S]*?<\/w:customXml>)/gi;
+  let match;
+  let lastEnd = 0;
+
+  while ((match = elementRegex.exec(bodyContent)) !== null) {
+    const fullMatch = match[0];
+    const start = bodyOpen + 8 + (match.index - lastEnd + match[0].indexOf('<'));
+    childElements.push({
+      type: fullMatch.startsWith('<w:p') ? 'p' : fullMatch.startsWith('<w:tbl') ? 'tbl' : 'other',
+      start: match.index,
+      end: match.index + fullMatch.length
+    });
+    lastEnd = match.index + fullMatch.length;
   }
 
-  // Find position of the nth paragraph
-  let paraCount = 0;
-  let pos = bodyOpen + 8;
-  while (paraCount < (position as number) && pos < bodyClose) {
-    const nextPara = docXml.indexOf("<w:p", pos);
-    if (nextPara === -1 || nextPara >= bodyClose) break;
-    paraCount++;
-    pos = nextPara + 4;
+  if (typeof position === "number") {
+    if (position >= childElements.length) {
+      // Append at end if index beyond children
+      return docXml.slice(0, bodyClose) + insertXml + docXml.slice(bodyClose);
+    }
+    const targetChild = childElements[position];
+    // Insert BEFORE the target child element
+    const insertPos = bodyOpen + 8 + targetChild.start;
+    return docXml.slice(0, insertPos) + insertXml + docXml.slice(insertPos);
   }
 
-  return docXml.slice(0, pos) + insertXml + docXml.slice(pos);
+  return docXml.slice(0, bodyClose) + insertXml + docXml.slice(bodyClose);
 }
 
 /**
@@ -2062,6 +2078,17 @@ export async function batchWordNodes(
         case "swap": {
           const result = await swapWordNodes(filePath, target, options.path2 as string || "/");
           results.push({ action, target, status: result.ok ? "success" : "failed" });
+          break;
+        }
+        case "copy": {
+          // target = source path, options.parent = target parent path
+          const targetParent = (options.parent as string) || (options.target as string) || "/body";
+          const copyResult = await copyWordNode(filePath, target, targetParent, {
+            index: options.index as number | undefined,
+            after: options.after as string | undefined,
+            before: options.before as string | undefined,
+          });
+          results.push({ action, target, status: copyResult.ok ? "success" : "failed" });
           break;
         }
         default:
@@ -3424,6 +3451,8 @@ function createBasicChartXml(): string {
 /**
  * Copies an element from source path to target parent path.
  * Returns the new element's path.
+ *
+ * C# Reference: WordHandler.Mutations.CopyFrom (line 370-406)
  */
 export async function copyWordNode(
   filePath: string,
@@ -3439,19 +3468,19 @@ export async function copyWordNode(
       return err("not_found", "Document.xml not found");
     }
 
-    // Get source element XML
-    const sourceResult = getWordNode(filePath, sourcePath, 0);
+    // Get source element info
+    const sourceResult = await getWordNode(filePath, sourcePath, 0);
     if (!sourceResult.ok || !sourceResult.data) {
       return err("not_found", `Source not found: ${sourcePath}`);
     }
 
-    // Extract the source element's XML
+    // Extract the source element's XML using the correct element type
     const sourceXml = extractElementXml(documentXml, sourcePath);
     if (!sourceXml) {
       return err("not_found", `Could not extract source element: ${sourcePath}`);
     }
 
-    // Generate new paraId/textId for cloned paragraphs
+    // Generate new paraId/textId for cloned paragraphs (like C# CloneNode + RegenerateIds)
     let clonedXml = generateNewParaIds(sourceXml);
 
     // Determine insert position
@@ -3462,28 +3491,65 @@ export async function copyWordNode(
       insertPosition = `find:${options.before}`;
     }
 
-    // Get target parent
+    // Normalize target parent path to body if needed
     if (targetParentPath === "/" || targetParentPath === "" || targetParentPath === "/body") {
       targetParentPath = "/body";
     }
 
-    // Insert at position
+    // Insert at position using the improved insertAtPosition
+    const originalDocXml = documentXml;
     documentXml = insertAtPosition(documentXml, clonedXml, insertPosition);
-    zip.file("word/document.xml", documentXml);
 
+    // If document wasn't modified, insertion failed
+    if (documentXml === originalDocXml && insertPosition !== undefined) {
+      return err("operation_failed", "Failed to insert element at specified position");
+    }
+
+    zip.file("word/document.xml", documentXml);
     await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
 
-    // Calculate the new path (simplified - returns target parent with element type)
-    const elementType = sourceResult.data.type || "element";
-    const targetPath = `${targetParentPath}/${elementType}[1]`;
+    // Calculate the actual path of the newly inserted element
+    // The new element was inserted at the specified position, so we count
+    // elements of the same type up to that position to find the index
+    const elementType = sourceResult.data.type || "paragraph";
+    const elementTag = elementType === "paragraph" ? "w:p" : elementType === "table" ? "w:tbl" : "w:p";
 
-    return ok({ path: targetPath });
+    // Count how many elements of this type exist at/after the insert position
+    const newPath = calculateInsertedPath(documentXml, clonedXml, targetParentPath, elementType);
+
+    return ok({ path: newPath });
   } catch (e) {
     if (e instanceof Error) {
       return err("operation_failed", e.message);
     }
     return err("operation_failed", String(e));
   }
+}
+
+/**
+ * Calculate the path of an inserted element by finding its position in the document
+ */
+function calculateInsertedPath(documentXml: string, insertedXml: string, targetParentPath: string, elementType: string): string {
+  // Find the element tag based on type
+  let elementTag = "w:p";
+  if (elementType === "table" || elementType === "tbl") {
+    elementTag = "w:tbl";
+  }
+
+  // Find the position where the inserted XML appears in the document
+  const insertIdx = documentXml.indexOf(insertedXml);
+  if (insertIdx === -1) {
+    // Fallback: return target parent with element type
+    return `${targetParentPath}/${elementType}[1]`;
+  }
+
+  // Count how many elements of the same type appear before this position
+  const beforeDoc = documentXml.substring(0, insertIdx);
+  const elementRegex = new RegExp(`<${elementTag}\\b`, 'gi');
+  const matches = beforeDoc.match(elementRegex);
+  const index = matches ? matches.length + 1 : 1;
+
+  return `${targetParentPath}/${elementType}[${index}]`;
 }
 
 // ============================================================================
@@ -3666,7 +3732,7 @@ function generateHexId(length: number): string {
 }
 
 function extractElementXml(documentXml: string, path: string): string | null {
-  // Simple path to XML extraction for common paths
+  // Path to XML extraction for common paths
   const parsed = parsePath(path);
   if (!parsed.ok || !parsed.data) return null;
 
@@ -3674,56 +3740,81 @@ function extractElementXml(documentXml: string, path: string): string | null {
   if (segments.length === 0) return null;
 
   const first = segments[0];
-  let result = documentXml;
 
   // Navigate to the element based on path
+  if (first.name === "body") {
+    // Handle /body path - extract body content
+    const bodyMatch = documentXml.match(/<w:body>([\s\S]*)<\/w:body>/);
+    if (!bodyMatch) return null;
+
+    // If only /body, return the body content
+    if (segments.length === 1) {
+      return bodyMatch[1];
+    }
+
+    // Otherwise, navigate to the child element
+    const remainingPath = "/" + segments.slice(1).map(s => s.name + (s.index !== undefined ? `[${s.index}]` : "")).join("/");
+    return extractElementXml(bodyMatch[1], remainingPath);
+  }
+
   if (first.name === "p" || first.name === "paragraph") {
     const idx = (first.index || 1) - 1;
-    const paras = result.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi);
-    if (paras && paras[idx]) {
-      return paras[idx];
+    const paras = documentXml.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi);
+    if (!paras || !paras[idx]) return null;
+
+    // If there are more segments, navigate deeper (e.g., /body/p[1]/r[2])
+    if (segments.length > 1) {
+      const remainingPath = "/" + segments.slice(1).map(s => s.name + (s.index !== undefined ? `[${s.index}]` : "")).join("/");
+      return extractElementXml(paras[idx], remainingPath);
     }
-  } else if (first.name === "tbl" || first.name === "table") {
+    return paras[idx];
+  }
+
+  if (first.name === "tbl" || first.name === "table") {
     const idx = (first.index || 1) - 1;
-    const tables = result.match(/<w:tbl\b[^>]*>[\s\S]*?<\/w:tbl>/gi);
-    if (tables && tables[idx]) {
-      return tables[idx];
+    const tables = documentXml.match(/<w:tbl\b[^>]*>[\s\S]*?<\/w:tbl>/gi);
+    if (!tables || !tables[idx]) return null;
+
+    // If there are more segments, navigate deeper (e.g., /body/tbl[1]/tr[2])
+    if (segments.length > 1) {
+      const remainingPath = "/" + segments.slice(1).map(s => s.name + (s.index !== undefined ? `[${s.index}]` : "")).join("/");
+      return extractElementXml(tables[idx], remainingPath);
+    }
+    return tables[idx];
+  }
+
+  if (first.name === "r" || first.name === "run") {
+    const idx = (first.index || 1) - 1;
+    const runs = documentXml.match(/<w:r\b[^>]*>[\s\S]*?<\/w:r>/gi);
+    if (runs && runs[idx]) {
+      return runs[idx];
+    }
+  }
+
+  if (first.name === "tr" || first.name === "row") {
+    const idx = (first.index || 1) - 1;
+    const rows = documentXml.match(/<w:tr\b[^>]*>[\s\S]*?<\/w:tr>/gi);
+    if (rows && rows[idx]) {
+      // If there are more segments, navigate deeper (e.g., /body/tbl[1]/tr[1]/tc[2])
+      if (segments.length > 1) {
+        const remainingPath = "/" + segments.slice(1).map(s => s.name + (s.index !== undefined ? `[${s.index}]` : "")).join("/");
+        return extractElementXml(rows[idx], remainingPath);
+      }
+      return rows[idx];
+    }
+  }
+
+  if (first.name === "tc" || first.name === "cell") {
+    const idx = (first.index || 1) - 1;
+    const cells = documentXml.match(/<w:tc\b[^>]*>[\s\S]*?<\/w:tc>/gi);
+    if (cells && cells[idx]) {
+      return cells[idx];
     }
   }
 
   return null;
 }
 
-function insertAtPosition(documentXml: string, insertXml: string, position: string | number | undefined): string {
-  if (position === undefined) {
-    // Append to body
-    return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
-  }
-
-  if (typeof position === "number") {
-    // Insert at index
-    const paras = documentXml.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi);
-    if (!paras || position >= paras.length) {
-      return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
-    }
-    const before = documentXml.indexOf(paras[position]);
-    if (before === -1) {
-      return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
-    }
-    return documentXml.slice(0, before) + insertXml + documentXml.slice(before);
-  }
-
-  if (typeof position === "string" && position.startsWith("find:")) {
-    const findText = position.substring(5);
-    const idx = documentXml.indexOf(findText);
-    if (idx === -1) {
-      return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
-    }
-    return documentXml.slice(0, idx) + insertXml + documentXml.slice(idx);
-  }
-
-  return documentXml.replace("</w:body>", `${insertXml}</w:body>`);
-}
 
 function generateNewParaIds(xml: string): string {
   let result = xml;
