@@ -3,6 +3,25 @@ import path from "node:path";
 import { OfficekitError, UsageError } from "./errors.js";
 import { assertFormat, type SupportedFormat } from "./formats.js";
 import { createStoredZip, readStoredZip } from "./zip.js";
+import {
+  addExcelNode,
+  createExcelDocument,
+  getExcelNode,
+  importExcelDelimitedData,
+  queryExcelNodes as queryExcelNodesFromAdapter,
+  rawExcelDocument,
+  removeExcelNode,
+  renderExcelHtmlFromRoot,
+  setExcelNode,
+  summarizeExcelCheck,
+  viewExcelDocument,
+} from "../../excel/src/adapter.js";
+import type {
+  ExcelCellModel as ExcelCell,
+  ExcelNamedRangeModel as ExcelNamedRange,
+  ExcelSheetModel as ExcelSheet,
+  ExcelWorkbookSettings,
+} from "../../excel/src/adapter.js";
 
 export interface WordParagraph {
   text: string;
@@ -30,57 +49,6 @@ export interface WordTableNode extends WordTable {
 
 export type WordBodyNode = WordParagraphNode | WordTableNode;
 
-export interface ExcelCell {
-  value: string;
-  formula?: string;
-  styleId?: string;
-  type?: "string" | "number" | "boolean" | "date";
-}
-
-export interface ExcelWorkbookSettings {
-  date1904?: boolean;
-  codeName?: string;
-  filterPrivacy?: boolean;
-  showObjects?: string;
-  backupFile?: boolean;
-  dateCompatibility?: boolean;
-  calcMode?: string;
-  iterate?: boolean;
-  iterateCount?: number;
-  iterateDelta?: number;
-  fullPrecision?: boolean;
-  fullCalcOnLoad?: boolean;
-  refMode?: string;
-  lockStructure?: boolean;
-  lockWindows?: boolean;
-}
-
-export interface ExcelNamedRange {
-  name: string;
-  ref: string;
-  scope?: string;
-  comment?: string;
-}
-
-export interface ExcelSheet {
-  name: string;
-  cells: Record<string, ExcelCell>;
-  autoFilter?: string;
-  freezeTopLeftCell?: string;
-  zoom?: number;
-  showGridLines?: boolean;
-  showHeadings?: boolean;
-  tabColor?: string;
-  header?: string;
-  footer?: string;
-  orientation?: string;
-  paperSize?: number;
-  fitToPage?: string;
-  protection?: boolean;
-  rowBreaks?: number[];
-  colBreaks?: number[];
-}
-
 export interface PptShape {
   text: string;
   kind?: string;
@@ -107,10 +75,22 @@ export interface OfficekitDocument {
     tables?: WordTable[];
   };
   excel?: {
-    sheets: ExcelSheet[];
+    path?: string;
+    type?: string;
+    sheets: Array<{
+      name: string;
+      cells: Record<string, ExcelCell>;
+      autoFilter?: string;
+      freezeTopLeftCell?: string;
+      zoom?: number;
+      showGridLines?: boolean;
+      showHeadings?: boolean;
+      tabColor?: string;
+    }>;
     settings?: ExcelWorkbookSettings;
     styleSheetXml?: string;
     namedRanges?: ExcelNamedRange[];
+    metadata?: Record<string, string>;
   };
   powerpoint?: { slides: PptSlide[] };
 }
@@ -140,12 +120,18 @@ export interface RawDocumentOptions {
 
 export async function createDocument(filePath: string) {
   const format = assertFormat(filePath);
+  if (format === "excel") {
+    return createExcelDocument(filePath);
+  }
   const document = createBlankDocument(format);
   await persistDocument(filePath, document);
   return { format, filePath, document };
 }
 
 export async function addDocumentNode(filePath: string, targetPath: string, options: CommandOptions) {
+  if (assertFormat(filePath) === "excel") {
+    return addExcelNode(filePath, targetPath, options);
+  }
   const document = await loadDocument(filePath);
   switch (document.format) {
     case "word": {
@@ -167,80 +153,8 @@ export async function addDocumentNode(filePath: string, targetPath: string, opti
         "Use /body with --type paragraph or --type table.",
       );
     }
-    case "excel": {
-      if (options.type === "namedrange" || options.type === "definedname") {
-        if (targetPath !== "/" && targetPath !== "/workbook") {
-          throw new UsageError(
-            "Excel add namedrange currently supports only the workbook root.",
-            "Use: officekit add book.xlsx / --type namedrange --prop name=Range1 --prop ref=Sheet1!A1",
-          );
-        }
-        const name = options.props.name ?? "";
-        if (!name) {
-          throw new UsageError("Excel namedrange requires --prop name=...", "Provide both name and ref properties.");
-        }
-        const ref = options.props.ref ?? "";
-        if (!ref) {
-          throw new UsageError("Excel namedrange requires --prop ref=...", "Provide both name and ref properties.");
-        }
-        document.excel ??= { sheets: [], namedRanges: [] };
-        document.excel.namedRanges ??= [];
-        if (document.excel.namedRanges.some((range) => range.name.toLowerCase() === name.toLowerCase())) {
-          throw new OfficekitError(`Named range '${name}' already exists.`, "duplicate_named_range");
-        }
-        document.excel.namedRanges.push({
-          name,
-          ref,
-          ...(options.props.scope ? { scope: options.props.scope } : {}),
-          ...(options.props.comment ? { comment: options.props.comment } : {}),
-        });
-        break;
-      }
-      if (options.type === "sheet") {
-        if (targetPath !== "/" && targetPath !== "/workbook") {
-          throw new UsageError(
-            "Excel add sheet currently supports only the workbook root.",
-            "Use: officekit add book.xlsx / --type sheet --prop name=Sheet2",
-          );
-        }
-        const requestedName = options.props.name ?? `Sheet${document.excel!.sheets.length + 1}`;
-        if (document.excel!.sheets.some((sheet) => sheet.name.toLowerCase() === requestedName.toLowerCase())) {
-          throw new OfficekitError(`Sheet '${requestedName}' already exists.`, "duplicate_sheet");
-        }
-        document.excel!.sheets.push({ name: requestedName, cells: {} });
-        break;
-      }
-      if (options.type === "row") {
-        const sheetName = targetPath.replace(/^\//, "") || "Sheet1";
-        const sheet = ensureSheet(document, sheetName);
-        const rowIndex = Math.max(
-          1,
-          Number(
-            options.props.index
-              ?? nextAvailableRowIndex(sheet),
-          ),
-        );
-        const cols = Math.max(1, Number(options.props.cols ?? "1"));
-        for (let columnOffset = 0; columnOffset < cols; columnOffset += 1) {
-          const ref = `${indexToColumnName(columnOffset + 1)}${rowIndex}`;
-          if (!sheet.cells[ref]) {
-            sheet.cells[ref] = { value: "" };
-          }
-        }
-        break;
-      }
-      if (options.type !== "cell") {
-        throw new UsageError(
-          "Excel add currently supports: sheet, row, or cell.",
-          "Use / with --type sheet, /Sheet1 with --type row, or /Sheet1 with --type cell.",
-        );
-      }
-      const sheetName = targetPath.replace(/^\//, "") || options.props.sheet || "Sheet1";
-      const sheet = ensureSheet(document, sheetName);
-      const ref = (options.props.ref ?? options.props.cell ?? "A1").toUpperCase();
-      sheet.cells[ref] = mergeExcelCell(sheet.cells[ref], options.props);
-      break;
-    }
+    case "excel":
+      throw new UsageError("Excel operations are handled by the Excel adapter.");
     case "powerpoint": {
       if (targetPath === "/" && options.type === "slide") {
         document.powerpoint!.slides.push({ title: options.props.title ?? "Untitled slide", shapes: [] });
@@ -266,50 +180,16 @@ export async function importDelimitedData(
   content: string,
   options: ImportOptions,
 ) {
-  const document = await loadDocument(filePath);
-  if (document.format !== "excel") {
-    throw new UsageError("import currently supports only .xlsx files.");
+  if (assertFormat(filePath) === "excel") {
+    return importExcelDelimitedData(filePath, parentPath, content, options);
   }
-
-  const sheetName = parentPath.replace(/^\//, "") || "Sheet1";
-  const sheet = ensureSheet(document, sheetName);
-  const rows = parseDelimitedRows(content, options.delimiter);
-  if (rows.length === 0) {
-    return { importedRows: 0, importedCols: 0, sheet: sheetName, startCell: options.startCell };
-  }
-
-  const { column, row } = parseCellAddress(options.startCell.toUpperCase());
-  const startColumnIndex = columnNameToIndex(column);
-  let maxColumns = 0;
-
-  for (const [rowOffset, values] of rows.entries()) {
-    maxColumns = Math.max(maxColumns, values.length);
-    for (const [columnOffset, rawValue] of values.entries()) {
-      const ref = `${indexToColumnName(startColumnIndex + columnOffset)}${row + rowOffset}`;
-      sheet.cells[ref] = inferImportedCell(rawValue);
-    }
-  }
-
-  if (options.hasHeader && rows.length > 0) {
-    const endColumn = indexToColumnName(startColumnIndex + Math.max(maxColumns - 1, 0));
-    const endRow = row + rows.length - 1;
-    sheet.autoFilter = `${column}${row}:${endColumn}${endRow}`;
-    sheet.freezeTopLeftCell = `${column}${row + 1}`;
-  }
-
-  stampDocument(document);
-  await persistDocument(filePath, document);
-  return {
-    importedRows: rows.length,
-    importedCols: maxColumns,
-    sheet: sheetName,
-    startCell: options.startCell.toUpperCase(),
-    ...(sheet.autoFilter ? { autoFilter: sheet.autoFilter } : {}),
-    ...(sheet.freezeTopLeftCell ? { freezeTopLeftCell: sheet.freezeTopLeftCell } : {}),
-  };
+  throw new UsageError("import currently supports only .xlsx files.");
 }
 
 export async function setDocumentNode(filePath: string, targetPath: string, options: CommandOptions) {
+  if (assertFormat(filePath) === "excel") {
+    return setExcelNode(filePath, targetPath, options);
+  }
   const document = await loadDocument(filePath);
   if (document.format === "word") {
     const match = /^\/body\/p\[(\d+)\]$/.exec(targetPath);
@@ -336,47 +216,7 @@ export async function setDocumentNode(filePath: string, targetPath: string, opti
       );
     }
   } else if (document.format === "excel") {
-    if (/^\/namedrange\[(.+)\]$/i.test(targetPath)) {
-      const range = resolveNamedRange(document, targetPath);
-      for (const [key, value] of Object.entries(options.props)) {
-        switch (key.toLowerCase()) {
-          case "name":
-            range.name = value;
-            break;
-          case "ref":
-            range.ref = value;
-            break;
-          case "comment":
-            range.comment = value;
-            break;
-          case "scope":
-            range.scope = value.toLowerCase() === "workbook" ? undefined : value;
-            break;
-          default:
-            throw new UsageError(`Unsupported namedrange property '${key}'.`, "Supported: name, ref, comment, scope.");
-        }
-      }
-    } else if (targetPath === "/" || targetPath === "/workbook") {
-      document.excel ??= { sheets: [], settings: {} };
-      document.excel.settings = mergeWorkbookSettings(document.excel.settings, options.props);
-    } else if (/^\/([^/]+)$/i.test(targetPath)) {
-      const sheetName = /^\/([^/]+)$/i.exec(targetPath)?.[1] ?? "Sheet1";
-      const sheet = ensureSheet(document, sheetName);
-      applySheetProperties(document, sheet, options.props);
-    } else if (/^\/([^/]+)\/autofilter$/i.test(targetPath)) {
-      const sheetName = /^\/([^/]+)\/autofilter$/i.exec(targetPath)?.[1] ?? "Sheet1";
-      const sheet = ensureSheet(document, sheetName);
-      sheet.autoFilter = options.props.ref ?? options.props.range ?? sheet.autoFilter;
-    } else if (/^\/([^/]+)\/([A-Z]+\d+):([A-Z]+\d+)$/i.test(targetPath)) {
-      const [, sheetName, startRef, endRef] = /^\/([^/]+)\/([A-Z]+\d+):([A-Z]+\d+)$/i.exec(targetPath) ?? [];
-      const sheet = ensureSheet(document, sheetName ?? "Sheet1");
-      for (const ref of enumerateRangeRefs((startRef ?? "A1").toUpperCase(), (endRef ?? "A1").toUpperCase())) {
-        sheet.cells[ref] = mergeExcelCell(sheet.cells[ref], options.props);
-      }
-    } else {
-      const { sheet, cellRef } = resolveExcelPath(document, targetPath);
-      sheet.cells[cellRef] = mergeExcelCell(sheet.cells[cellRef], options.props);
-    }
+    throw new UsageError("Excel operations are handled by the Excel adapter.");
   } else {
     const shapeMatch = /^\/slide\[(\d+)\]\/shape\[(\d+)\]$/.exec(targetPath);
     const slideMatch = /^\/slide\[(\d+)\]$/.exec(targetPath);
@@ -400,6 +240,9 @@ export async function setDocumentNode(filePath: string, targetPath: string, opti
 }
 
 export async function removeDocumentNode(filePath: string, targetPath: string) {
+  if (assertFormat(filePath) === "excel") {
+    return removeExcelNode(filePath, targetPath);
+  }
   const document = await loadDocument(filePath);
   if (document.format === "word") {
     const match = /^\/body\/p\[(\d+)\]$/.exec(targetPath);
@@ -412,23 +255,7 @@ export async function removeDocumentNode(filePath: string, targetPath: string) {
       throw new UsageError("Word remove currently supports /body/p[n] or /body/table[n].");
     }
   } else if (document.format === "excel") {
-    if (/^\/namedrange\[(.+)\]$/i.test(targetPath)) {
-      const ranges = document.excel?.namedRanges ?? [];
-      const resolved = resolveNamedRangeIndex(ranges, targetPath);
-      ranges.splice(resolved, 1);
-    } else if (/^\/([^/]+)\/row\[(\d+)\]$/i.test(targetPath)) {
-      const [, sheetName, rowRef] = /^\/([^/]+)\/row\[(\d+)\]$/i.exec(targetPath) ?? [];
-      const sheet = ensureSheet(document, sheetName ?? "Sheet1");
-      const rowNumber = Number(rowRef);
-      for (const ref of Object.keys(sheet.cells)) {
-        if (Number(/\d+/.exec(ref)?.[0] ?? "0") === rowNumber) {
-          delete sheet.cells[ref];
-        }
-      }
-    } else {
-      const { sheet, cellRef } = resolveExcelPath(document, targetPath);
-      delete sheet.cells[cellRef];
-    }
+    removeExcelNode(document, targetPath);
   } else {
     const shapeMatch = /^\/slide\[(\d+)\]\/shape\[(\d+)\]$/.exec(targetPath);
     const slideMatch = /^\/slide\[(\d+)\]$/.exec(targetPath);
@@ -447,26 +274,26 @@ export async function removeDocumentNode(filePath: string, targetPath: string) {
 }
 
 export async function getDocumentNode(filePath: string, targetPath: string) {
+  if (assertFormat(filePath) === "excel") {
+    return getExcelNode(filePath, targetPath);
+  }
   const document = await loadDocument(filePath);
   return materializePath(document, targetPath);
 }
 
 export async function queryDocumentNodes(filePath: string, selector: string) {
-  const document = await loadDocument(filePath);
-  if (document.format !== "excel") {
-    return [materializePath(document, selector)];
+  if (assertFormat(filePath) === "excel") {
+    return queryExcelNodesFromAdapter(filePath, selector);
   }
-  return queryExcelNodes(document, selector);
+  const document = await loadDocument(filePath);
+  return [materializePath(document, selector)];
 }
 
 export async function viewDocument(filePath: string, mode: string) {
-  const document = await loadDocument(filePath);
-  if (document.format === "excel") {
-    return {
-      mode,
-      output: renderExcelView(document, mode),
-    };
+  if (assertFormat(filePath) === "excel") {
+    return viewExcelDocument(filePath, mode);
   }
+  const document = await loadDocument(filePath);
   if (mode === "html") {
     return {
       mode,
@@ -492,6 +319,9 @@ export async function viewDocument(filePath: string, mode: string) {
 }
 
 export async function checkDocument(filePath: string) {
+  if (assertFormat(filePath) === "excel") {
+    return summarizeExcelCheck(filePath);
+  }
   const document = await loadDocument(filePath);
   return {
     ok: true,
@@ -501,12 +331,12 @@ export async function checkDocument(filePath: string) {
 }
 
 export async function rawDocument(filePath: string, options: RawDocumentOptions = {}) {
-  if (options.partPath) {
-    const format = assertFormat(filePath);
-    if (format === "excel") {
-      const zip = readStoredZip(await readFile(filePath));
-      return renderExcelRaw(zip, options, await loadDocument(filePath));
-    }
+  if (assertFormat(filePath) === "excel") {
+    return rawExcelDocument(filePath, options.partPath ?? "/", {
+      startRow: options.startRow,
+      endRow: options.endRow,
+      cols: options.cols,
+    });
   }
   const document = await loadDocument(filePath);
   return JSON.stringify(document, null, 2);
@@ -521,13 +351,7 @@ export function renderDocumentHtml(document: OfficekitDocument): string {
   }
 
   if (document.format === "excel") {
-    const rows = document.excel!.sheets.flatMap((sheet) =>
-      Object.entries(sheet.cells).map(([ref, cell]) => {
-        const detail = [cell.value, cell.formula ? `formula=${cell.formula}` : ""].filter(Boolean).join(" · ");
-        return `<tr><th>${escapeHtml(sheet.name)}!${escapeHtml(ref)}</th><td>${escapeHtml(detail)}</td></tr>`;
-      }),
-    );
-    return `<section data-format="excel"><table><tbody>${rows.join("") || '<tr><td colspan="2"><em>Empty workbook</em></td></tr>'}</tbody></table></section>`;
+    return renderExcelHtmlFromRoot(document.excel);
   }
 
   const slides = document.powerpoint!.slides.map((slide, index) => `<section class="slide"><h2>Slide ${index + 1}: ${escapeHtml(slide.title)}</h2>${slide.shapes.map((shape) => `<p>${escapeHtml(shape.text)}</p>`).join("")}</section>`);

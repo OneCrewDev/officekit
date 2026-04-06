@@ -1,4 +1,4 @@
-import { createDocument, addDocumentNode, checkDocument, getDocumentNode, importDelimitedData, parseProps, rawDocument, removeDocumentNode, renderDocumentHtml, setDocumentNode, viewDocument } from "./document-store.js";
+import { createDocument, addDocumentNode, checkDocument, getDocumentNode, importDelimitedData, parseProps, queryDocumentNodes, rawDocument, removeDocumentNode, renderDocumentHtml, setDocumentNode, viewDocument } from "./document-store.js";
 import { UnsupportedCapabilityError, UsageError } from "./errors.js";
 
 export interface CommandResult {
@@ -56,7 +56,9 @@ export async function executeCommand(argv: string[]): Promise<CommandResult> {
     const targetPath = rest[1] ?? "/";
     if (!filePath) throw new UsageError(`${command} requires <file> [path].`);
     const parsed = parseProps(rest.slice(2));
-    const result = await getDocumentNode(filePath, targetPath);
+    const result = command === "query"
+      ? await queryDocumentNodes(filePath, targetPath)
+      : await getDocumentNode(filePath, targetPath);
     return { exitCode: 0, stdout: parsed.json || command === "query" ? JSON.stringify(result, null, 2) : summarizeResult(result) };
   }
 
@@ -71,7 +73,39 @@ export async function executeCommand(argv: string[]): Promise<CommandResult> {
   if (command === "raw") {
     const filePath = rest[0];
     if (!filePath) throw new UsageError("raw requires <file>.");
-    return { exitCode: 0, stdout: await rawDocument(filePath) };
+    const partPath = rest[1] && !rest[1].startsWith("--") ? rest[1] : undefined;
+    let startRow: number | undefined;
+    let endRow: number | undefined;
+    let cols: string[] | undefined;
+    for (let index = partPath ? 2 : 1; index < rest.length; index += 1) {
+      const token = rest[index];
+      if (token === "--start-row") {
+        startRow = Number(rest[index + 1]);
+        index += 1;
+        continue;
+      }
+      if (token === "--end-row") {
+        endRow = Number(rest[index + 1]);
+        index += 1;
+        continue;
+      }
+      if (token === "--cols") {
+        cols = (rest[index + 1] ?? "")
+          .split(",")
+          .map((value) => value.trim().toUpperCase())
+          .filter(Boolean);
+        index += 1;
+      }
+    }
+    return {
+      exitCode: 0,
+      stdout: await rawDocument(filePath, {
+        ...(partPath ? { partPath } : {}),
+        ...(startRow !== undefined ? { startRow } : {}),
+        ...(endRow !== undefined ? { endRow } : {}),
+        ...(cols ? { cols } : {}),
+      }),
+    };
   }
 
   if (command === "check") {

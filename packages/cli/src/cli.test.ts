@@ -275,11 +275,13 @@ describe("officekit CLI scaffold", () => {
   test("supports Excel raw parts and filtered raw sheet output", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-raw-parts-"));
     const filePath = path.join(dir, "raw-parts.xlsx");
+    const sharedFilePath = path.join(dir, "shared-raw.xlsx");
     await writeFile(filePath, buildExternalExcelSettingsZip());
+    await writeFile(sharedFilePath, buildDeflatedExternalExcelZip());
 
     const workbookRaw = await runCli(["raw", filePath, "/workbook"]);
     const stylesRaw = await runCli(["raw", filePath, "/styles"]);
-    const sharedStringsRaw = await runCli(["raw", filePath, "/sharedstrings"]);
+    const sharedStringsRaw = await runCli(["raw", sharedFilePath, "/sharedstrings"]);
     const sheetRaw = await runCli(["raw", filePath, "/Sheet1", "--start-row", "1", "--end-row", "1", "--cols", "A"]);
 
     expect(workbookRaw.stdout).toContain("<workbook");
