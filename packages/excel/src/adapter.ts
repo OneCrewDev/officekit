@@ -3401,12 +3401,15 @@ function evaluateFormulaExpression(
     ISNA: (args) => evaluateIsNaFormula(state, args, sheet),
     ISEVEN: (args) => evaluateIsEvenOddFormula(state, args, sheet, true),
     ISODD: (args) => evaluateIsEvenOddFormula(state, args, sheet, false),
+    MODE: (args) => evaluateModeFormula(state, args, sheet, visited),
+    LARGE: (args) => evaluateLargeSmallFormula(state, args, sheet, visited, true),
+    SMALL: (args) => evaluateLargeSmallFormula(state, args, sheet, visited, false),
   };
 
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -3913,6 +3916,33 @@ function evaluateMedianFormula(state: ExcelWorkbookState | undefined, args: stri
   const sorted = values.slice().sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function evaluateModeFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const values = extractFormulaArgValues(state, args, sheet, visited);
+  if (values.length === 0) return undefined;
+  const counts = new Map<number, number>();
+  for (const v of values) {
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+  let mode = values[0];
+  let maxCount = 0;
+  for (const [v, c] of counts) {
+    if (c > maxCount || (c === maxCount && v < mode)) {
+      maxCount = c;
+      mode = v;
+    }
+  }
+  return maxCount > 1 ? mode : undefined;
+}
+
+function evaluateLargeSmallFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>, isLarge: boolean) {
+  const parts = splitFormulaArgs(args);
+  const values = extractFormulaArgValues(state, parts[0] ?? "", sheet, visited);
+  const k = firstNumericFormulaArg(state, parts[1] ?? "1", sheet, visited);
+  if (values.length === 0 || k === undefined || k < 1 || k > values.length) return undefined;
+  const sorted = values.slice().sort((a, b) => isLarge ? b - a : a - b);
+  return sorted[Math.round(k) - 1];
 }
 
 function resolveCellRef(arg: string, sheet: ExcelSheetModel) {
