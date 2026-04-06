@@ -4662,7 +4662,7 @@ function evaluateTextJoinFormula(state: ExcelWorkbookState | undefined, formula:
 }
 
 function evaluateDateFormulaForDisplay(state: ExcelWorkbookState | undefined, formula: string, sheet: ExcelSheetModel) {
-  const dateMatch = /^(TODAY|NOW|DATE|YEAR|MONTH|DAY|HOUR|MINUTE|SECOND)\((.*)\)$/i.exec(formula);
+  const dateMatch = /^(TODAY|NOW|DATE|YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|DATEVALUE|TIMEVALUE|EDATE|EOMONTH|DATEDIF|DAYS|NETWORKDAYS|WORKDAY|WEEKDAY|YEARFRAC|ISOWEEKNUM)\((.*)\)$/i.exec(formula);
   if (!dateMatch) return undefined;
   const fn = dateMatch[1].toUpperCase();
   const args = splitFormulaArgs(dateMatch[2]);
@@ -4682,6 +4682,103 @@ function evaluateDateFormulaForDisplay(state: ExcelWorkbookState | undefined, fo
     if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return undefined;
     return String((new Date(year, month - 1, day).getTime() / 86400000) + 25569);
   }
+  if (fn === "DATEVALUE") {
+    const text = String(resolveScalarValue(state, args[0] ?? "", sheet) ?? "");
+    const parsed = Date.parse(text);
+    if (isNaN(parsed)) return undefined;
+    return String((parsed / 86400000) + 25569);
+  }
+  if (fn === "TIMEVALUE") {
+    const text = String(resolveScalarValue(state, args[0] ?? "", sheet) ?? "");
+    const parsed = Date.parse("1970-01-01 " + text);
+    if (isNaN(parsed)) return undefined;
+    const midnight = new Date(parsed).setHours(0, 0, 0, 0);
+    return String((parsed - midnight) / 86400000);
+  }
+  if (fn === "EDATE") {
+    const serial = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const months = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? 0);
+    if (!Number.isFinite(serial) || !Number.isFinite(months)) return undefined;
+    const date = new Date(Math.round((serial - 25569) * 86400000));
+    date.setMonth(date.getMonth() + months);
+    return String((date.getTime() / 86400000) + 25569);
+  }
+  if (fn === "EOMONTH") {
+    const serial = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const months = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? 0);
+    if (!Number.isFinite(serial) || !Number.isFinite(months)) return undefined;
+    const date = new Date(Math.round((serial - 25569) * 86400000));
+    date.setMonth(date.getMonth() + months + 1, 0);
+    return String((date.getTime() / 86400000) + 25569);
+  }
+  if (fn === "DATEDIF") {
+    const serial1 = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const serial2 = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? NaN);
+    const unit = String(resolveScalarValue(state, args[2] ?? "", sheet) ?? "").toUpperCase();
+    if (!Number.isFinite(serial1) || !Number.isFinite(serial2)) return undefined;
+    const d1 = new Date(Math.round((serial1 - 25569) * 86400000));
+    const d2 = new Date(Math.round((serial2 - 25569) * 86400000));
+    switch (unit) {
+      case "D": return String(Math.round((d2.getTime() - d1.getTime()) / 86400000));
+      case "M": return String((d2.getFullYear() - d1.getFullYear()) * 12 + d2.getMonth() - d1.getMonth());
+      case "Y": return String(d2.getFullYear() - d1.getFullYear());
+      default: return undefined;
+    }
+  }
+  if (fn === "DAYS") {
+    const serial1 = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const serial2 = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? NaN);
+    if (!Number.isFinite(serial1) || !Number.isFinite(serial2)) return undefined;
+    return String(Math.round((serial1 - serial2)));
+  }
+  if (fn === "NETWORKDAYS") {
+    const serial1 = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const serial2 = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? NaN);
+    if (!Number.isFinite(serial1) || !Number.isFinite(serial2)) return undefined;
+    const d1 = new Date(Math.round((serial1 - 25569) * 86400000));
+    const d2 = new Date(Math.round((serial2 - 25569) * 86400000));
+    let count = 0;
+    const current = new Date(d1);
+    while (current <= d2) {
+      const dayOfWeek = current.getDay();
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
+      current.setDate(current.getDate() + 1);
+    }
+    return String(count);
+  }
+  if (fn === "WORKDAY") {
+    const serial = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const days = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? 0);
+    if (!Number.isFinite(serial) || !Number.isFinite(days)) return undefined;
+    const date = new Date(Math.round((serial - 25569) * 86400000));
+    let remaining = days;
+    while (remaining > 0) {
+      date.setDate(date.getDate() + 1);
+      const dayOfWeek = date.getDay();
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) remaining--;
+    }
+    return String((date.getTime() / 86400000) + 25569);
+  }
+  if (fn === "YEARFRAC") {
+    const serial1 = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    const serial2 = Number(firstNumericFormulaArg(state, args[1] ?? "0", sheet, new Set()) ?? NaN);
+    if (!Number.isFinite(serial1) || !Number.isFinite(serial2)) return undefined;
+    const d1 = new Date(Math.round((serial1 - 25569) * 86400000));
+    const d2 = new Date(Math.round((serial2 - 25569) * 86400000));
+    const days = (d2.getTime() - d1.getTime()) / 86400000;
+    return String(days / 365.25);
+  }
+  if (fn === "ISOWEEKNUM") {
+    const serial = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
+    if (!Number.isFinite(serial)) return undefined;
+    const date = new Date(Math.round((serial - 25569) * 86400000));
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNum = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+    return String(weekNum);
+  }
   const serial = Number(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? NaN);
   if (!Number.isFinite(serial)) return undefined;
   // Excel serial date: days since 1899-12-30 (OA epoch)
@@ -4694,6 +4791,7 @@ function evaluateDateFormulaForDisplay(state: ExcelWorkbookState | undefined, fo
     case "HOUR": return String(date.getHours());
     case "MINUTE": return String(date.getMinutes());
     case "SECOND": return String(date.getSeconds());
+    case "WEEKDAY": return String(date.getDay() + 1);
   }
   return undefined;
 }
