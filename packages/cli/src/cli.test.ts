@@ -473,6 +473,42 @@ describe("officekit CLI scaffold", () => {
     expect(pivotXml).toContain('rowGrandTotals="0"');
   });
 
+  test("adds Excel picture and shape objects through OfficeCLI-style add paths", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-add-drawing-"));
+    const filePath = path.join(dir, "add-drawing.xlsx");
+    const imagePath = path.join(dir, "pixel.png");
+    await writeFile(imagePath, tinyPngBuffer());
+    await runCli(["create", filePath]);
+
+    await runCli(["add", filePath, "/Sheet1", "--type", "shape", "--prop", "name=Callout", "--prop", "text=Ship now", "--prop", "x=1", "--prop", "y=2", "--prop", "width=4", "--prop", "height=2", "--prop", "fill=4472C4", "--prop", "color=FFFFFF", "--prop", "align=center"]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "picture", "--prop", `path=${imagePath}`, "--prop", "name=HeroImage", "--prop", "alt=Launch artwork", "--prop", "x=5", "--prop", "y=1", "--prop", "width=3", "--prop", "height=3"]);
+    await runCli(["set", filePath, "/Sheet1/shape[1]", "--prop", "text=Ship this week"]);
+    await runCli(["set", filePath, "/Sheet1/picture[1]", "--prop", "alt=Updated artwork"]);
+
+    const shape = await runCli(["get", filePath, "/Sheet1/shape[1]", "--json"]);
+    const picture = await runCli(["get", filePath, "/Sheet1/picture[1]", "--json"]);
+    const shapeQuery = await runCli(["query", filePath, "shape"]);
+    const pictureQuery = await runCli(["query", filePath, "picture"]);
+    const rawDrawing = await runCli(["raw", filePath, "/Sheet1/drawing"]);
+
+    expect(shape.stdout).toContain('"name": "Callout"');
+    expect(shape.stdout).toContain('"text": "Ship this week"');
+    expect(picture.stdout).toContain('"name": "HeroImage"');
+    expect(shapeQuery.stdout).toContain('"type": "shape"');
+    expect(pictureQuery.stdout).toContain('"type": "picture"');
+    expect(rawDrawing.stdout).toContain("HeroImage");
+    expect(rawDrawing.stdout).toContain("Updated artwork");
+    expect(rawDrawing.stdout).toContain("Ship this week");
+
+    const zip = readStoredZip(await readFile(filePath));
+    const contentTypes = zip.get("[Content_Types].xml")!.toString("utf8");
+    const drawingRels = zip.get("xl/drawings/_rels/drawing1.xml.rels")!.toString("utf8");
+
+    expect(contentTypes).toContain("image/png");
+    expect(drawingRels).toContain("/relationships/image");
+    expect(zip.get("xl/media/image1.png")).toBeDefined();
+  });
+
   test("evaluates simple formulas for display and creates styles from cell props", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-style-formula-"));
     const filePath = path.join(dir, "style-formula.xlsx");
@@ -1977,6 +2013,13 @@ function buildExternalExcelAdvancedObjectsZip() {
 <pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="PivotTable1"/>`),
     },
   ]);
+}
+
+function tinyPngBuffer() {
+  return Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn0Yl8AAAAASUVORK5CYII=",
+    "base64",
+  );
 }
 
 function buildExternalPptZip(title: string, shape: string) {

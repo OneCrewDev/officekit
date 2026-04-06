@@ -353,10 +353,24 @@ export async function addExcelNode(filePath: string, targetPath: string, options
     return { ...pivot, path: `/${sheet.name}/pivottable[${getSheetPivots(state, sheet).length}]`, type: "pivottable" };
   }
 
+  if (options.type === "picture" || options.type === "image") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const picture = await addPicture(state, sheet, options.props);
+    await writeWorkbookState(filePath, state);
+    return { ...picture, path: `/${sheet.name}/picture[${getDrawingShapes(state, sheet).filter((item) => item.kind === "picture").length}]`, type: "picture" };
+  }
+
+  if (options.type === "shape" || options.type === "textbox") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const shape = addShape(state, sheet, options.props);
+    await writeWorkbookState(filePath, state);
+    return { ...shape, path: `/${sheet.name}/shape[${getDrawingShapes(state, sheet).filter((item) => item.kind === "shape").length}]`, type: "shape" };
+  }
+
   if (options.type !== "cell") {
     throw new UsageError(
-      "Excel add currently supports: sheet, row, cell, namedrange, validation, comment, autofilter, rowbreak, colbreak, table, sparkline, chart, or pivottable.",
-      "Use / with --type sheet|namedrange, or /Sheet1 with --type row|cell|validation|comment|autofilter|rowbreak|colbreak|table|sparkline|chart|pivottable.",
+      "Excel add currently supports: sheet, row, cell, namedrange, validation, comment, autofilter, rowbreak, colbreak, table, sparkline, chart, pivottable, picture, or shape.",
+      "Use / with --type sheet|namedrange, or /Sheet1 with --type row|cell|validation|comment|autofilter|rowbreak|colbreak|table|sparkline|chart|pivottable|picture|shape.",
     );
   }
 
@@ -1775,6 +1789,85 @@ function addPivotTable(state: ExcelWorkbookState, sheet: ExcelSheetModel, props:
   return getSheetPivots(state, sheet).at(-1) ?? { name, path: path.posix.relative(path.posix.dirname(sheet.entryName), pivotPath) };
 }
 
+async function addPicture(state: ExcelWorkbookState, sheet: ExcelSheetModel, props: Record<string, string>) {
+  const sourcePath = props.path ?? props.src;
+  if (!sourcePath) {
+    throw new UsageError("Excel picture requires --prop path=<image> or --prop src=<image>.");
+  }
+  const imageBytes = await readFile(sourcePath);
+  const extension = normalizeImageExtension(path.extname(sourcePath));
+  const mediaPath = nextIndexedPartPath(state.zip, "xl/media/image", `.${extension}`);
+  state.zip.set(mediaPath, imageBytes);
+
+  const drawingPath = ensureDrawingPart(state, sheet);
+  const drawingRelId = appendRelationship(
+    state.zip,
+    getRelationshipsEntryName(drawingPath),
+    drawingPath,
+    mediaPath,
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+  );
+  const drawingXml = requireEntry(state.zip, drawingPath);
+  const nextAnchorId = nextDrawingObjectId(drawingXml);
+  const { fromCol, fromRow, toCol, toRow } = resolveAnchorBounds(props, { x: 0, y: 0, width: 5, height: 5 });
+  const name = props.name ?? `Picture ${nextAnchorId}`;
+  const description = props.alt ?? props.description ?? "";
+  const anchorXml = `  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>${fromCol}</xdr:col><xdr:row>${fromRow}</xdr:row></xdr:from>
+    <xdr:to><xdr:col>${toCol}</xdr:col><xdr:row>${toRow}</xdr:row></xdr:to>
+    <xdr:pic>
+      <xdr:nvPicPr><xdr:cNvPr id="${nextAnchorId}" name="${escapeXml(name)}"${description ? ` descr="${escapeXml(description)}"` : ""}/><xdr:cNvPicPr/><xdr:nvPr/></xdr:nvPicPr>
+      <xdr:blipFill><a:blip r:embed="${escapeXml(drawingRelId)}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>
+      <xdr:spPr/>
+    </xdr:pic>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>`;
+  state.zip.set(drawingPath, Buffer.from(drawingXml.replace(/<\/xdr:wsDr>/, `${anchorXml}\n</xdr:wsDr>`), "utf8"));
+  return getDrawingShapes(state, sheet).filter((item) => item.kind === "picture").at(-1) ?? { kind: "picture" as const, name };
+}
+
+function addShape(state: ExcelWorkbookState, sheet: ExcelSheetModel, props: Record<string, string>) {
+  const drawingPath = ensureDrawingPart(state, sheet);
+  const drawingXml = requireEntry(state.zip, drawingPath);
+  const nextAnchorId = nextDrawingObjectId(drawingXml);
+  const { fromCol, fromRow, toCol, toRow } = resolveAnchorBounds(props, { x: 1, y: 1, width: 5, height: 3 });
+  const name = props.name ?? `Shape ${nextAnchorId}`;
+  const text = props.text ?? props.value ?? "";
+  const fillXml = props.fill && props.fill.toLowerCase() !== "none"
+    ? `<a:solidFill><a:srgbClr val="${escapeXml(stripArgb(normalizeArgbColor(props.fill)))}"/></a:solidFill>`
+    : props.fill?.toLowerCase() === "none"
+      ? "<a:noFill/>"
+      : "";
+  const lineXml = props.line
+    ? props.line.toLowerCase() === "none"
+      ? "<a:ln><a:noFill/></a:ln>"
+      : `<a:ln><a:solidFill><a:srgbClr val="${escapeXml(stripArgb(normalizeArgbColor(props.line)))}"/></a:solidFill></a:ln>`
+    : "";
+  const bodyPrAttrs = props.margin ? ` lIns="${Math.round(Number(props.margin) * 12700)}" rIns="${Math.round(Number(props.margin) * 12700)}" tIns="${Math.round(Number(props.margin) * 12700)}" bIns="${Math.round(Number(props.margin) * 12700)}"` : "";
+  const paragraphProps = props.align
+    ? `<a:pPr algn="${normalizeShapeAlign(props.align)}"/>`
+    : "";
+  const runProps = [
+    props.size ? ` sz="${Math.round(Number(props.size) * 100)}"` : "",
+    props.bold && isTruthy(props.bold) ? ` b="1"` : "",
+    props.italic && isTruthy(props.italic) ? ` i="1"` : "",
+  ].join("");
+  const textFillXml = props.color ? `<a:solidFill><a:srgbClr val="${escapeXml(stripArgb(normalizeArgbColor(props.color)))}"/></a:solidFill>` : "";
+  const fontXml = props.font ? `<a:latin typeface="${escapeXml(props.font)}"/><a:ea typeface="${escapeXml(props.font)}"/>` : "";
+  const anchorXml = `  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>${fromCol}</xdr:col><xdr:row>${fromRow}</xdr:row></xdr:from>
+    <xdr:to><xdr:col>${toCol}</xdr:col><xdr:row>${toRow}</xdr:row></xdr:to>
+    <xdr:sp>
+      <xdr:nvSpPr><xdr:cNvPr id="${nextAnchorId}" name="${escapeXml(name)}"/><xdr:cNvSpPr/><xdr:nvPr/></xdr:nvSpPr>
+      <xdr:spPr>${fillXml}${lineXml}</xdr:spPr>
+      <xdr:txBody><a:bodyPr${bodyPrAttrs}/><a:lstStyle/><a:p>${paragraphProps}<a:r><a:rPr lang="en-US"${runProps}>${textFillXml}${fontXml}</a:rPr><a:t>${escapeXml(text)}</a:t></a:r></a:p></xdr:txBody>
+    </xdr:sp>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>`;
+  state.zip.set(drawingPath, Buffer.from(drawingXml.replace(/<\/xdr:wsDr>/, `${anchorXml}\n</xdr:wsDr>`), "utf8"));
+  return getDrawingShapes(state, sheet).filter((item) => item.kind === "shape").at(-1) ?? { kind: "shape" as const, name, text };
+}
+
 function setComment(state: ExcelWorkbookState, sheet: ExcelSheetModel, index: number, props: Record<string, string>) {
   const commentsPath = resolveCommentsPath(state, sheet);
   if (!commentsPath) {
@@ -2564,6 +2657,33 @@ function ensureDrawingPart(state: ExcelWorkbookState, sheet: ExcelSheetModel) {
     /<(?:\w+:)?tableParts\b[\s\S]*?<\/(?:\w+:)?tableParts>|<(?:\w+:)?extLst\b[\s\S]*?<\/(?:\w+:)?extLst>|<(?:\w+:)?colBreaks\b[\s\S]*?<\/(?:\w+:)?colBreaks>|<(?:\w+:)?rowBreaks\b[\s\S]*?<\/(?:\w+:)?rowBreaks>|<(?:\w+:)?headerFooter\b[\s\S]*?<\/(?:\w+:)?headerFooter>|<(?:\w+:)?pageSetup\b[^>]*\/?>|<(?:\w+:)?sheetProtection\b[^>]*\/?>|<(?:\w+:)?autoFilter\b[^>]*\/?>|<(?:\w+:)?sheetData\b[\s\S]*?<\/(?:\w+:)?sheetData>/,
   );
   return drawingPath;
+}
+
+function nextDrawingObjectId(drawingXml: string) {
+  return Math.max(0, ...[...drawingXml.matchAll(/<xdr:cNvPr\b[^>]*id="(\d+)"/g)].map((match) => Number(match[1]))) + 1;
+}
+
+function resolveAnchorBounds(
+  props: Record<string, string>,
+  defaults: { x: number; y: number; width: number; height: number },
+) {
+  const fromCol = Number(props.x ?? defaults.x);
+  const fromRow = Number(props.y ?? defaults.y);
+  const width = Number(props.width ?? defaults.width);
+  const height = Number(props.height ?? defaults.height);
+  return {
+    fromCol,
+    fromRow,
+    toCol: fromCol + width,
+    toRow: fromRow + height,
+  };
+}
+
+function normalizeImageExtension(extension: string) {
+  const normalized = extension.replace(/^\./, "").toLowerCase();
+  if (normalized === "jpg") return "jpeg";
+  if (["png", "jpeg", "gif"].includes(normalized)) return normalized;
+  throw new UsageError(`Unsupported Excel picture extension '.${normalized || "unknown"}'.`, "Use png, jpg/jpeg, or gif.");
 }
 
 function parseSharedStrings(zip: Map<string, Buffer>) {
@@ -3642,6 +3762,9 @@ function resolveContentTypeOverride(entryName: string) {
   if (entryName === "xl/styles.xml") return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"] as [string, string];
   if (entryName === "xl/sharedStrings.xml") return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"] as [string, string];
   if (entryName === "docProps/core.xml") return [entryName, "application/vnd.openxmlformats-package.core-properties+xml"] as [string, string];
+  if (/^xl\/media\/image\d+\.png$/i.test(entryName)) return [entryName, "image/png"] as [string, string];
+  if (/^xl\/media\/image\d+\.jpe?g$/i.test(entryName)) return [entryName, "image/jpeg"] as [string, string];
+  if (/^xl\/media\/image\d+\.gif$/i.test(entryName)) return [entryName, "image/gif"] as [string, string];
   if (/^xl\/comments\d+\.xml$/i.test(entryName)) return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"] as [string, string];
   if (/^xl\/tables\/table\d+\.xml$/i.test(entryName)) return [entryName, "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"] as [string, string];
   if (/^xl\/drawings\/drawing\d+\.xml$/i.test(entryName)) return [entryName, "application/vnd.openxmlformats-officedocument.drawing+xml"] as [string, string];
@@ -3665,6 +3788,18 @@ function normalizeRefMode(value: string) {
 function normalizeArgbColor(value: string) {
   const normalized = value.replace(/^#/, "").toUpperCase();
   return normalized.length === 6 ? `FF${normalized}` : normalized;
+}
+
+function stripArgb(value: string) {
+  return value.length === 8 ? value.slice(2) : value;
+}
+
+function normalizeShapeAlign(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "center" || normalized === "c" || normalized === "ctr") return "ctr";
+  if (normalized === "right" || normalized === "r") return "r";
+  if (normalized === "justify" || normalized === "j" || normalized === "justified") return "just";
+  return "l";
 }
 
 function parseBreakList(value: string) {
