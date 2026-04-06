@@ -2077,3 +2077,1222 @@ export async function batchWordNodes(
     return err("operation_failed", String(e));
   }
 }
+
+// ============================================================================
+// View Modes (text, annotated, outline, stats, issues, html, forms)
+// ============================================================================
+
+export interface WordViewOptions {
+  startLine?: number;
+  endLine?: number;
+  maxLines?: number;
+  cols?: string[];
+  pageFilter?: string;
+  issueType?: string;
+  limit?: number;
+}
+
+/**
+ * Views a Word document in various modes.
+ */
+export async function viewWordDocument(
+  filePath: string,
+  mode: string,
+  options?: WordViewOptions,
+): Promise<{ mode: string; output: string }> {
+  const zip = await readDocxZip(filePath);
+  const documentXml = await getXmlEntry(zip, "word/document.xml") ?? "";
+  const stylesXml = await getXmlEntry(zip, "word/styles.xml") ?? "";
+
+  const normalizedMode = mode.toLowerCase();
+
+  switch (normalizedMode) {
+    case "text":
+      return { mode, output: renderTextView(documentXml, options) };
+    case "annotated":
+      return { mode, output: renderAnnotatedView(documentXml, stylesXml, options) };
+    case "outline":
+      return { mode, output: renderOutlineView(documentXml, filePath) };
+    case "stats":
+      return { mode, output: renderStatsView(documentXml) };
+    case "issues":
+      return { mode, output: renderIssuesView(documentXml, options) };
+    case "html":
+      return { mode, output: renderHtmlView(documentXml, stylesXml) };
+    case "forms":
+      return { mode, output: await renderFormsView(zip, documentXml) };
+    case "json":
+      return { mode, output: renderJsonView(documentXml, stylesXml) };
+    default:
+      throw new Error(`Unsupported view mode '${mode}'. Use: text, annotated, outline, stats, issues, html, forms, or json.`);
+  }
+}
+
+function renderTextView(xml: string, options?: WordViewOptions): string {
+  const lines: string[] = [];
+  const startLine = options?.startLine ?? 1;
+  const endLine = options?.endLine ?? Number.MAX_SAFE_INTEGER;
+  const maxLines = options?.maxLines ?? Number.MAX_SAFE_INTEGER;
+
+  const paras = getParagraphsInfo(xml);
+  let lineNum = 0;
+  let emitted = 0;
+
+  for (const para of paras) {
+    lineNum++;
+
+    if (lineNum < startLine) continue;
+    if (lineNum > endLine) break;
+
+    if (emitted >= maxLines) {
+      lines.push(`... (showed ${emitted} rows, use --start/--end to view more)`);
+      break;
+    }
+
+    const path = `/body/p[${para.index}]`;
+    const styleStr = para.style && para.style !== "Normal" ? `[${para.style}] ` : "";
+    const prefix = styleStr ? `[${path}] ${styleStr}` : `[${path}] `;
+    lines.push(`${prefix}${para.text}`);
+    emitted++;
+  }
+
+  return lines.join("\n");
+}
+
+function renderAnnotatedView(xml: string, stylesXml: string, options?: WordViewOptions): string {
+  const lines: string[] = [];
+  const startLine = options?.startLine ?? 1;
+  const endLine = options?.endLine ?? Number.MAX_SAFE_INTEGER;
+  const maxLines = options?.maxLines ?? Number.MAX_SAFE_INTEGER;
+
+  const paras = getParagraphsInfo(xml);
+  let lineNum = 0;
+  let emitted = 0;
+
+  for (const para of paras) {
+    lineNum++;
+
+    if (lineNum < startLine) continue;
+    if (lineNum > endLine) break;
+
+    if (emitted >= maxLines) {
+      lines.push(`... (showed ${emitted} rows, use --start/--end to view more)`);
+      break;
+    }
+
+    const path = `/body/p[${para.index}]`;
+    const styleName = para.style ? getStyleNameFromId(stylesXml, para.style) || para.style : "Normal";
+
+    if (!para.text.trim() && !hasRuns(xml, para.index)) {
+      lines.push(`[${path}] [] <- ${styleName} | empty paragraph`);
+    } else {
+      const runs = getRunsInfo(xml, para.index);
+      for (const run of runs) {
+        const fmt = formatRunInfo(run);
+        lines.push(`[${path}] 「${run.text}」 <- ${styleName} | ${fmt}`);
+      }
+    }
+    emitted++;
+  }
+
+  return lines.join("\n");
+}
+
+function renderOutlineView(xml: string, filePath: string): string {
+  const lines: string[] = [];
+
+  const paras = getParagraphsInfo(xml);
+  const tables = getTablesInfo(xml);
+  const fileName = filePath.split("/").pop() || "document.docx";
+
+  lines.push(`File: ${fileName} | ${paras.length} paragraphs | ${tables.length} tables`);
+
+  let lineNum = 0;
+  for (const para of paras) {
+    lineNum++;
+
+    if (para.style && (para.style.includes("Heading") || para.style === "Title" || para.style === "Subtitle")) {
+      const level = getHeadingLevel(para.style);
+      const indent = level <= 1 ? "" : "  ".repeat(level - 1);
+      const prefix = level === 0 ? "■" : "├──";
+      lines.push(`${indent}${prefix} [${lineNum}] "${para.text}" (${para.style})`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function renderStatsView(xml: string): string {
+  const lines: string[] = [];
+
+  const paras = getParagraphsInfo(xml);
+  const styleCounts: Record<string, number> = {};
+  const fontCounts: Record<string, number> = {};
+  const sizeCounts: Record<string, number> = {};
+
+  let totalWords = 0;
+  let emptyParagraphs = 0;
+  let doubleSpaces = 0;
+  let totalChars = 0;
+
+  for (const para of paras) {
+    const style = para.style || "Normal";
+    styleCounts[style] = (styleCounts[style] || 0) + 1;
+
+    if (!para.text.trim()) {
+      emptyParagraphs++;
+      continue;
+    }
+
+    const words = para.text.split(/\s+/).filter(Boolean);
+    totalWords += words.length;
+    totalChars += para.text.length;
+
+    if (para.text.includes("  ")) {
+      doubleSpaces++;
+    }
+
+    const runs = getRunsInfo(xml, para.index);
+    for (const run of runs) {
+      if (run.font) fontCounts[run.font] = (fontCounts[run.font] || 0) + 1;
+      if (run.size) sizeCounts[run.size] = (sizeCounts[run.size] || 0) + 1;
+    }
+  }
+
+  lines.push(`Paragraphs: ${paras.length} | Words: ${totalWords} | Total Characters: ${totalChars}`);
+  lines.push("");
+
+  lines.push("Style Distribution:");
+  for (const [style, count] of Object.entries(styleCounts).sort((a, b) => b[1] - a[1])) {
+    lines.push(`  ${style}: ${count}`);
+  }
+
+  lines.push("");
+  lines.push("Font Usage:");
+  for (const [font, count] of Object.entries(fontCounts).sort((a, b) => b[1] - a[1]).slice(0, 10)) {
+    lines.push(`  ${font}: ${count}`);
+  }
+
+  lines.push("");
+  lines.push("Font Size Usage:");
+  for (const [size, count] of Object.entries(sizeCounts).sort((a, b) => b[1] - a[1]).slice(0, 10)) {
+    lines.push(`  ${size}: ${count}`);
+  }
+
+  lines.push("");
+  lines.push(`Empty Paragraphs: ${emptyParagraphs}`);
+  lines.push(`Consecutive Spaces: ${doubleSpaces}`);
+
+  return lines.join("\n");
+}
+
+function renderIssuesView(xml: string, options?: WordViewOptions): string {
+  const lines: string[] = [];
+  const limit = options?.limit ?? 100;
+
+  const paras = getParagraphsInfo(xml);
+  let issueNum = 0;
+
+  for (let i = 0; i < paras.length && issueNum < limit; i++) {
+    const para = paras[i];
+    const path = `/body/p[${para.index}]`;
+
+    if (!para.text.trim()) {
+      issueNum++;
+      lines.push(`[S${issueNum}] Structure | Warning | ${path} | Empty paragraph`);
+    }
+
+    if (para.text.includes("  ")) {
+      issueNum++;
+      lines.push(`[C${issueNum}] Content | Warning | ${path} | Consecutive spaces`);
+    }
+
+    if ((para.style === "Normal" || !para.style) && para.text.trim()) {
+      const hasIndent = hasFirstLineIndent(xml, para.index);
+      if (!hasIndent) {
+        issueNum++;
+        lines.push(`[F${issueNum}] Format | Warning | ${path} | Body paragraph missing first-line indent`);
+      }
+    }
+
+    if (issueNum >= limit) break;
+  }
+
+  return lines.length > 0 ? lines.join("\n") : "No issues found.";
+}
+
+function renderHtmlView(xml: string, _stylesXml: string): string {
+  const lines: string[] = [];
+
+  lines.push("<!DOCTYPE html>");
+  lines.push("<html lang=\"en\">");
+  lines.push("<head>");
+  lines.push("<meta charset=\"UTF-8\">");
+  lines.push("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+  lines.push("<title>Word Document Preview</title>");
+  lines.push("<style>");
+  lines.push(generateBasicCss());
+  lines.push("</style>");
+  lines.push("</head>");
+  lines.push("<body>");
+
+  const paras = getParagraphsInfo(xml);
+  for (const para of paras) {
+    let className = para.style || "Normal";
+    className = className.replace(/\s+/g, "");
+
+    let html = `<p`;
+    if (className !== "Normal") {
+      html += ` class="${escapeHtml(className)}"`;
+    }
+    html += ">";
+
+    const runs = getRunsInfo(xml, para.index);
+    for (const run of runs) {
+      let text = escapeHtml(run.text);
+      if (run.bold) text = `<strong>${text}</strong>`;
+      if (run.italic) text = `<em>${text}</em>`;
+      if (run.underline) text = `<u>${text}</u>`;
+      if (run.color) text = `<span style="color:${run.color}">${text}</span>`;
+      html += text;
+    }
+
+    html += "</p>";
+    lines.push(html);
+  }
+
+  lines.push("</body>");
+  lines.push("</html>");
+
+  return lines.join("\n");
+}
+
+async function renderFormsView(zip: JSZip, xml: string): Promise<string> {
+  const lines: string[] = [];
+
+  const settingsXml = await getXmlEntry(zip, "word/settings.xml");
+  const hasProtection = settingsXml ? /<w:documentProtection/.test(settingsXml) : false;
+  lines.push(`Document Protection: ${hasProtection ? "enabled" : "none"}`);
+
+  const sdts = getContentControls(xml);
+
+  if (sdts.length === 0) {
+    lines.push("");
+    lines.push("No form fields or content controls found.");
+    return lines.join("\n");
+  }
+
+  lines.push("");
+  lines.push(`Content Controls (${sdts.length}):`);
+
+  for (let i = 0; i < sdts.length; i++) {
+    const sdt = sdts[i];
+    const nameStr = sdt.tag ? ` name="${sdt.tag}"` : "";
+    lines.push(`  #${i + 1} [sdt] type=${sdt.type || "richtext"}${nameStr} value="${sdt.text}"`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderJsonView(xml: string, stylesXml: string): string {
+  const result: Record<string, unknown> = {
+    paragraphs: [],
+    styles: parseStylesForJson(stylesXml),
+  };
+
+  const paras = getParagraphsInfo(xml);
+  for (const para of paras) {
+    result.paragraphs.push({
+      text: para.text,
+      style: para.style || "Normal",
+    });
+  }
+
+  return JSON.stringify(result, null, 2);
+}
+
+// ============================================================================
+// Style Management
+// ============================================================================
+
+export interface WordStyleProperties {
+  basedOn?: string;
+  next?: string;
+  font?: string;
+  fontSize?: string;
+  bold?: boolean;
+  italic?: boolean;
+  color?: string;
+  underline?: string;
+  alignment?: "left" | "center" | "right" | "justify";
+  spaceBefore?: string;
+  spaceAfter?: string;
+  lineSpacing?: string;
+}
+
+/**
+ * Sets a style in a Word document.
+ */
+export async function setWordStyle(
+  filePath: string,
+  styleName: string,
+  properties: WordStyleProperties,
+): Promise<{ ok: boolean; path: string }> {
+  const buffer = await readFile(filePath);
+  const zip = await JSZip.loadAsync(buffer);
+
+  let stylesXml = await getXmlEntry(zip, "word/styles.xml");
+  if (!stylesXml) {
+    stylesXml = createBasicStylesXml();
+    zip.file("word/styles.xml", stylesXml);
+  }
+
+  const styleId = styleName.replace(/\s+/g, "");
+  const styleExists = new RegExp(`<w:style\\b[^>]*\\s+w:styleId=["']${escapeRegex(styleId)}["']`, "i").test(stylesXml);
+
+  if (styleExists) {
+    stylesXml = updateExistingStyle(stylesXml, styleId, properties);
+  } else {
+    stylesXml = addNewStyle(stylesXml, styleName, properties);
+  }
+
+  zip.file("word/styles.xml", stylesXml);
+
+  const updatedBuffer = await zip.generateAsync({ type: "nodebuffer" });
+  await writeFile(filePath, updatedBuffer);
+
+  return { ok: true, path: `/styles/${styleId}` };
+}
+
+function createBasicStylesXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault>
+      <w:rPr>
+        <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:hint="default"/>
+        <w:sz w:val="22"/>
+        <w:szCs w:val="22"/>
+      </w:rPr>
+    </w:rPrDefault>
+    <w:pPrDefault>
+      <w:pPr>
+        <w:spacing w:after="200" w:line="276" w:lineRule="auto"/>
+      </w:pPr>
+    </w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+    <w:qFormat/>
+  </w:style>
+</w:styles>`;
+}
+
+function addNewStyle(stylesXml: string, styleName: string, properties: WordStyleProperties): string {
+  const styleId = styleName.replace(/\s+/g, "");
+  const styleType = properties.basedOn?.includes("Char") ? "character" : "paragraph";
+
+  let styleXml = `  <w:style w:type="${styleType}" w:styleId="${escapeXml(styleId)}">\n`;
+  styleXml += `    <w:name w:val="${escapeXml(styleName)}"/>\n`;
+
+  if (properties.basedOn) {
+    styleXml += `    <w:basedOn w:val="${escapeXml(properties.basedOn)}"/>\n`;
+  }
+  if (properties.next) {
+    styleXml += `    <w:next w:val="${escapeXml(properties.next)}"/>\n`;
+  }
+
+  const rPrParts: string[] = [];
+  if (properties.font) {
+    rPrParts.push(`<w:rFonts w:ascii="${escapeXml(properties.font)}" w:hAnsi="${escapeXml(properties.font)}"/>`);
+  }
+  if (properties.fontSize) {
+    const halfPoints = parseFontSizeToHalfPoints(properties.fontSize);
+    rPrParts.push(`<w:sz w:val="${halfPoints}"/>`);
+    rPrParts.push(`<w:szCs w:val="${halfPoints}"/>`);
+  }
+  if (properties.bold) rPrParts.push("<w:b/>");
+  if (properties.italic) rPrParts.push("<w:i/>");
+  if (properties.color) rPrParts.push(`<w:color w:val="${escapeXml(properties.color)}"/>`);
+  if (properties.underline) rPrParts.push(`<w:u w:val="${escapeXml(properties.underline)}"/>`);
+
+  if (rPrParts.length > 0) {
+    styleXml += "    <w:rPr>\n";
+    for (const part of rPrParts) {
+      styleXml += `      ${part}\n`;
+    }
+    styleXml += "    </w:rPr>\n";
+  }
+
+  const pPrParts: string[] = [];
+  if (properties.alignment) {
+    pPrParts.push(`<w:jc w:val="${mapAlignment(properties.alignment)}"/>`);
+  }
+  if (properties.spaceBefore || properties.spaceAfter || properties.lineSpacing) {
+    let spacing = "<w:spacing";
+    if (properties.spaceBefore) spacing += ` w:before="${parseWordSpacing(properties.spaceBefore)}"`;
+    if (properties.spaceAfter) spacing += ` w:after="${parseWordSpacing(properties.spaceAfter)}"`;
+    if (properties.lineSpacing) spacing += ` w:line="${parseLineSpacing(properties.lineSpacing)}" w:lineRule="auto"`;
+    spacing += "/>";
+    pPrParts.push(spacing);
+  }
+
+  if (pPrParts.length > 0) {
+    styleXml += "    <w:pPr>\n";
+    for (const part of pPrParts) {
+      styleXml += `      ${part}\n`;
+    }
+    styleXml += "    </w:pPr>\n";
+  }
+
+  styleXml += "  </w:style>\n";
+
+  const insertIndex = stylesXml.lastIndexOf("</w:styles>");
+  return stylesXml.slice(0, insertIndex) + styleXml + stylesXml.slice(insertIndex);
+}
+
+function updateExistingStyle(stylesXml: string, styleId: string, properties: WordStyleProperties): string {
+  const styleRegex = new RegExp(`<w:style\\b[^>]*\\s+w:styleId=["']${escapeRegex(styleId)}["'][^>]*>[\\s\\S]*?<\\/w:style>`, "i");
+  const match = styleRegex.exec(stylesXml);
+
+  if (!match) {
+    throw new Error(`Style '${styleId}' not found`);
+  }
+
+  const oldStyle = match[0];
+  const styleName = getStyleNameFromId(stylesXml, styleId) || styleId;
+  const props: WordStyleProperties = { ...properties };
+
+  if (!props.basedOn) {
+    const basedOnMatch = /<w:basedOn\s+w:val=["']([^"']+)["']/i.exec(oldStyle);
+    props.basedOn = basedOnMatch ? basedOnMatch[1] : "Normal";
+  }
+
+  const newStylesXml = stylesXml.replace(oldStyle, "");
+  return addNewStyle(newStylesXml, styleName, props);
+}
+
+// ============================================================================
+// Section Layout
+// ============================================================================
+
+export interface WordSectionProperties {
+  pageWidth?: number;
+  pageHeight?: number;
+  marginTop?: number;
+  marginBottom?: number;
+  marginLeft?: number;
+  marginRight?: number;
+  orientation?: "portrait" | "landscape";
+  columns?: number;
+  columnSpace?: number;
+  sectionType?: "nextPage" | "continuous" | "evenPage" | "oddPage" | "nextColumn";
+}
+
+/**
+ * Sets section layout properties in a Word document.
+ */
+export async function setWordSection(
+  filePath: string,
+  sectionPath: string,
+  properties: WordSectionProperties,
+): Promise<{ ok: boolean; path: string }> {
+  const buffer = await readFile(filePath);
+  const zip = await JSZip.loadAsync(buffer);
+
+  let documentXml = await getXmlEntry(zip, "word/document.xml");
+  if (!documentXml) {
+    throw new Error("Document.xml not found");
+  }
+
+  const hasSectPr = /<w:sectPr/.test(documentXml);
+
+  if (!hasSectPr) {
+    const sectPrXml = buildSectionPropertiesXml(properties);
+    documentXml = documentXml.replace("</w:body>", `${sectPrXml}</w:body>`);
+  } else {
+    documentXml = updateSectionProperties(documentXml, properties);
+  }
+
+  zip.file("word/document.xml", documentXml);
+
+  const updatedBuffer = await zip.generateAsync({ type: "nodebuffer" });
+  await writeFile(filePath, updatedBuffer);
+
+  return { ok: true, path: sectionPath || "/body/sectPr" };
+}
+
+function buildSectionPropertiesXml(props: WordSectionProperties): string {
+  let xml = "<w:sectPr>";
+
+  if (props.pageWidth || props.pageHeight) {
+    const width = props.pageWidth || 12240;
+    const height = props.pageHeight || 15840;
+    const orient = props.orientation === "landscape" ? "landscape" : "portrait";
+    xml += `<w:pgSz w:w="${width}" w:h="${height}" w:orient="${orient}"/>`;
+  }
+
+  if (props.marginTop || props.marginBottom || props.marginLeft || props.marginRight) {
+    xml += `<w:pgMar w:top="${props.marginTop || 1440}" w:right="${props.marginRight || 1440}" w:bottom="${props.marginBottom || 1440}" w:left="${props.marginLeft || 1440}" w:header="720" w:footer="720" w:gutter="0"/>`;
+  }
+
+  if (props.columns !== undefined) {
+    xml += `<w:cols w:num="${props.columns}"`;
+    if (props.columnSpace) {
+      xml += ` w:space="${props.columnSpace}"`;
+    }
+    xml += "/>";
+  }
+
+  if (props.sectionType) {
+    xml += `<w:type w:val="${mapSectionType(props.sectionType)}"/>`;
+  }
+
+  xml += "</w:sectPr>";
+  return xml;
+}
+
+function updateSectionProperties(docXml: string, props: WordSectionProperties): string {
+  const sectPrRegex = /<w:sectPr\b[^>]*>([\s\S]*?)<\/w:sectPr>/i;
+
+  if (!sectPrRegex.test(docXml)) {
+    return docXml.replace("</w:body>", `${buildSectionPropertiesXml(props)}</w:body>`);
+  }
+
+  let newXml = docXml;
+
+  if (props.pageWidth !== undefined || props.pageHeight !== undefined || props.orientation !== undefined) {
+    const pgSzRegex = /<w:pgSz\b[^>]*\/?>/i;
+    const width = props.pageWidth || 12240;
+    const height = props.pageHeight || 15840;
+    const orient = props.orientation === "landscape" ? "landscape" : "portrait";
+
+    if (pgSzRegex.test(newXml)) {
+      newXml = newXml.replace(pgSzRegex, `<w:pgSz w:w="${width}" w:h="${height}" w:orient="${orient}"/>`);
+    } else {
+      newXml = newXml.replace("<w:sectPr>", `<w:sectPr><w:pgSz w:w="${width}" w:h="${height}" w:orient="${orient}"/>`);
+    }
+  }
+
+  if (props.marginTop !== undefined || props.marginBottom !== undefined || props.marginLeft !== undefined || props.marginRight !== undefined) {
+    const pgMarRegex = /<w:pgMar\b[^>]*\/?>/i;
+    const top = props.marginTop ?? 1440;
+    const bottom = props.marginBottom ?? 1440;
+    const left = props.marginLeft ?? 1440;
+    const right = props.marginRight ?? 1440;
+
+    if (pgMarRegex.test(newXml)) {
+      newXml = newXml.replace(pgMarRegex, `<w:pgMar w:top="${top}" w:right="${right}" w:bottom="${bottom}" w:left="${left}" w:header="720" w:footer="720" w:gutter="0"/>`);
+    } else {
+      newXml = newXml.replace("<w:sectPr>", `<w:sectPr><w:pgMar w:top="${top}" w:right="${right}" w:bottom="${bottom}" w:left="${left}" w:header="720" w:footer="720" w:gutter="0"/>`);
+    }
+  }
+
+  if (props.columns !== undefined) {
+    const colsRegex = /<w:cols\b[^>]*\/?>/i;
+    const space = props.columnSpace ?? 480;
+
+    if (colsRegex.test(newXml)) {
+      newXml = newXml.replace(colsRegex, `<w:cols w:num="${props.columns}" w:space="${space}"/>`);
+    } else {
+      newXml = newXml.replace("<w:sectPr>", `<w:sectPr><w:cols w:num="${props.columns}" w:space="${space}"/>`);
+    }
+  }
+
+  if (props.sectionType !== undefined) {
+    const typeRegex = /<w:type\b[^>]*\/?>/i;
+    const sectTypeVal = mapSectionType(props.sectionType);
+
+    if (typeRegex.test(newXml)) {
+      newXml = newXml.replace(typeRegex, `<w:type w:val="${sectTypeVal}"/>`);
+    } else {
+      newXml = newXml.replace("<w:sectPr>", `<w:sectPr><w:type w:val="${sectTypeVal}"/>`);
+    }
+  }
+
+  return newXml;
+}
+
+// ============================================================================
+// Doc Defaults
+// ============================================================================
+
+export interface WordDocDefaults {
+  font?: string;
+  fontSize?: string;
+  bold?: boolean;
+  italic?: boolean;
+  color?: string;
+  alignment?: string;
+  spaceBefore?: string;
+  spaceAfter?: string;
+  lineSpacing?: string;
+}
+
+/**
+ * Sets document default properties in a Word document.
+ */
+export async function setWordDocDefaults(
+  filePath: string,
+  properties: WordDocDefaults,
+): Promise<{ ok: boolean }> {
+  const buffer = await readFile(filePath);
+  const zip = await JSZip.loadAsync(buffer);
+
+  let stylesXml = await getXmlEntry(zip, "word/styles.xml");
+  if (!stylesXml) {
+    stylesXml = createBasicStylesXml();
+    zip.file("word/styles.xml", stylesXml);
+  }
+
+  stylesXml = updateDocDefaults(stylesXml, properties);
+  zip.file("word/styles.xml", stylesXml);
+
+  const updatedBuffer = await zip.generateAsync({ type: "nodebuffer" });
+  await writeFile(filePath, updatedBuffer);
+
+  return { ok: true };
+}
+
+function updateDocDefaults(stylesXml: string, props: WordDocDefaults): string {
+  let newXml = stylesXml;
+
+  if (!/<w:docDefaults>/i.test(newXml)) {
+    newXml = newXml.replace("<w:styles", "<w:styles><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault></w:docDefaults>");
+  }
+
+  if (props.font || props.fontSize || props.bold || props.italic || props.color) {
+    const rPrRegex = /<w:rPrDefault>([\s\S]*?)<\/w:rPrDefault>/i;
+    const rPrMatch = rPrRegex.exec(newXml);
+
+    if (rPrMatch) {
+      let rPrContent = rPrMatch[1];
+
+      if (props.font) {
+        rPrContent = updateOrAddElement(rPrContent, "w:rFonts", `<w:rFonts w:ascii="${escapeXml(props.font)}" w:hAnsi="${escapeXml(props.font)}"/>`);
+      }
+
+      if (props.fontSize) {
+        const halfPoints = parseFontSizeToHalfPoints(props.fontSize);
+        rPrContent = updateOrAddElement(rPrContent, "w:sz", `<w:sz w:val="${halfPoints}"/>`);
+        rPrContent = updateOrAddElement(rPrContent, "w:szCs", `<w:szCs w:val="${halfPoints}"/>`);
+      }
+
+      if (props.bold) rPrContent = updateOrAddElement(rPrContent, "w:b", "<w:b/>");
+      if (props.italic) rPrContent = updateOrAddElement(rPrContent, "w:i", "<w:i/>");
+      if (props.color) rPrContent = updateOrAddElement(rPrContent, "w:color", `<w:color w:val="${escapeXml(props.color)}"/>`);
+
+      newXml = newXml.replace(rPrMatch[0], `<w:rPrDefault>${rPrContent}</w:rPrDefault>`);
+    }
+  }
+
+  if (props.alignment || props.spaceBefore || props.spaceAfter || props.lineSpacing) {
+    if (!/<w:pPrDefault>/i.test(newXml)) {
+      newXml = newXml.replace("</w:docDefaults>", "<w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>");
+    }
+
+    const pPrRegex = /<w:pPrDefault>([\s\S]*?)<\/w:pPrDefault>/i;
+    const pPrMatch = pPrRegex.exec(newXml);
+
+    if (pPrMatch) {
+      let pPrContent = pPrMatch[1];
+
+      if (props.alignment) {
+        pPrContent = updateOrAddElement(pPrContent, "w:jc", `<w:jc w:val="${mapAlignment(props.alignment)}"/>`);
+      }
+
+      if (props.spaceBefore || props.spaceAfter || props.lineSpacing) {
+        let spacingAttrs = "";
+        if (props.spaceBefore) spacingAttrs += ` w:before="${parseWordSpacing(props.spaceBefore)}"`;
+        if (props.spaceAfter) spacingAttrs += ` w:after="${parseWordSpacing(props.spaceAfter)}"`;
+        if (props.lineSpacing) spacingAttrs += ` w:line="${parseLineSpacing(props.lineSpacing)}" w:lineRule="auto"`;
+        pPrContent = updateOrAddElement(pPrContent, "w:spacing", `<w:spacing${spacingAttrs}/>`);
+      }
+
+      newXml = newXml.replace(pPrMatch[0], `<w:pPrDefault>${pPrContent}</w:pPrDefault>`);
+    }
+  }
+
+  return newXml;
+}
+
+// ============================================================================
+// Raw XML Operations
+// ============================================================================
+
+/**
+ * Gets raw XML from a Word document part.
+ */
+export async function rawWordDocument(filePath: string, partPath: string): Promise<string> {
+  const zip = await readDocxZip(filePath);
+  const normalizedPath = partPath.toLowerCase();
+
+  switch (normalizedPath) {
+    case "/":
+    case "/document":
+    case "/word/document.xml":
+      return await getXmlEntry(zip, "word/document.xml") ?? "";
+    case "/styles":
+    case "/word/styles.xml":
+      return await getXmlEntry(zip, "word/styles.xml") ?? "(no styles)";
+    case "/settings":
+    case "/word/settings.xml":
+      return await getXmlEntry(zip, "word/settings.xml") ?? "(no settings)";
+    case "/numbering":
+    case "/word/numbering.xml":
+      return await getXmlEntry(zip, "word/numbering.xml") ?? "(no numbering)";
+    case "/comments":
+    case "/word/comments.xml":
+      return await getXmlEntry(zip, "word/comments.xml") ?? "(no comments)";
+    default: {
+      const headerMatch = /^\/header\[?(\d+)?\]?$/i.exec(partPath);
+      if (headerMatch) {
+        const idx = headerMatch[1] ? parseInt(headerMatch[1], 10) - 1 : 0;
+        return await getXmlEntry(zip, `word/header${idx + 1}.xml`) ?? `(no header ${idx + 1})`;
+      }
+
+      const footerMatch = /^\/footer\[?(\d+)?\]?$/i.exec(partPath);
+      if (footerMatch) {
+        const idx = footerMatch[1] ? parseInt(footerMatch[1], 10) - 1 : 0;
+        return await getXmlEntry(zip, `word/footer${idx + 1}.xml`) ?? `(no footer ${idx + 1})`;
+      }
+
+      throw new Error(`Unsupported part path '${partPath}'. Use: /document, /styles, /settings, /numbering, /comments, /header[n], /footer[n].`);
+    }
+  }
+}
+
+export interface RawSetOptions {
+  xpath?: string;
+  action?: string;
+  xml?: string;
+}
+
+/**
+ * Sets raw XML in a Word document part.
+ */
+export async function rawSetWordDocument(
+  filePath: string,
+  partPath: string,
+  xpath: string,
+  action: string,
+  xml?: string,
+): Promise<{ ok: boolean; affected: number }> {
+  const buffer = await readFile(filePath);
+  const zip = await JSZip.loadAsync(buffer);
+
+  const normalizedPath = partPath.toLowerCase();
+  let targetXml: string | null = null;
+  let entryName: string | null = null;
+
+  switch (normalizedPath) {
+    case "/":
+    case "/document":
+    case "/word/document.xml":
+      targetXml = await getXmlEntry(zip, "word/document.xml");
+      entryName = "word/document.xml";
+      break;
+    case "/styles":
+    case "/word/styles.xml":
+      targetXml = await getXmlEntry(zip, "word/styles.xml");
+      entryName = "word/styles.xml";
+      break;
+    case "/settings":
+    case "/word/settings.xml":
+      targetXml = await getXmlEntry(zip, "word/settings.xml");
+      entryName = "word/settings.xml";
+      break;
+    case "/numbering":
+    case "/word/numbering.xml":
+      targetXml = await getXmlEntry(zip, "word/numbering.xml");
+      entryName = "word/numbering.xml";
+      break;
+    case "/comments":
+    case "/word/comments.xml":
+      targetXml = await getXmlEntry(zip, "word/comments.xml");
+      entryName = "word/comments.xml";
+      break;
+    default: {
+      const headerMatch = /^\/header\[?(\d+)?\]?$/i.exec(partPath);
+      if (headerMatch) {
+        const idx = headerMatch[1] ? parseInt(headerMatch[1], 10) - 1 : 0;
+        targetXml = await getXmlEntry(zip, `word/header${idx + 1}.xml`);
+        entryName = `word/header${idx + 1}.xml`;
+        break;
+      }
+
+      const footerMatch = /^\/footer\[?(\d+)?\]?$/i.exec(partPath);
+      if (footerMatch) {
+        const idx = footerMatch[1] ? parseInt(footerMatch[1], 10) - 1 : 0;
+        targetXml = await getXmlEntry(zip, `word/footer${idx + 1}.xml`);
+        entryName = `word/footer${idx + 1}.xml`;
+        break;
+      }
+
+      throw new Error(`Unsupported part path '${partPath}'. Use: /document, /styles, /settings, /numbering, /comments, /header[n], /footer[n].`);
+    }
+  }
+
+  if (targetXml === null || entryName === null) {
+    throw new Error(`Part not found: ${partPath}`);
+  }
+
+  const affected = executeRawXmlAction(targetXml, xpath, action, xml);
+  zip.file(entryName, targetXml);
+
+  const updatedBuffer = await zip.generateAsync({ type: "nodebuffer" });
+  await writeFile(filePath, updatedBuffer);
+
+  return { ok: true, affected };
+}
+
+function executeRawXmlAction(
+  xml: string,
+  xpath: string,
+  action: string,
+  newXml?: string,
+): number {
+  switch (action.toLowerCase()) {
+    case "get":
+      return 1;
+    case "set":
+      if (!newXml) {
+        throw new Error("set action requires xml parameter");
+      }
+      if (xpath) {
+        const regex = new RegExp(escapeRegex(xpath), "i");
+        if (regex.test(xml)) {
+          return xml.replace(regex, newXml) !== xml ? 1 : 0;
+        }
+      }
+      return 0;
+    case "insert":
+      if (!newXml) {
+        throw new Error("insert action requires xml parameter");
+      }
+      if (xpath) {
+        const regex = new RegExp(escapeRegex(xpath), "i");
+        if (regex.test(xml)) {
+          xml = xml.replace(regex, `$&${newXml}`);
+          return 1;
+        }
+      }
+      return 0;
+    case "delete":
+      if (xpath) {
+        const regex = new RegExp(escapeRegex(xpath), "i");
+        const before = xml;
+        xml = xml.replace(regex, "");
+        return before !== xml ? 1 : 0;
+      }
+      return 0;
+    default:
+      throw new Error(`Unsupported action '${action}'. Use: get, set, insert, delete.`);
+  }
+}
+
+// ============================================================================
+// Compatibility Settings
+// ============================================================================
+
+export interface WordCompatibilityProperties {
+  preset?: "word2019" | "word2010" | "css-layout";
+  mode?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Sets compatibility settings in a Word document.
+ */
+export async function setWordCompatibility(
+  filePath: string,
+  properties: WordCompatibilityProperties,
+): Promise<{ ok: boolean }> {
+  const buffer = await readFile(filePath);
+  const zip = await JSZip.loadAsync(buffer);
+
+  let settingsXml = await getXmlEntry(zip, "word/settings.xml");
+  if (!settingsXml) {
+    settingsXml = createBasicSettingsXml();
+  }
+
+  settingsXml = updateCompatibilitySettings(settingsXml, properties);
+  zip.file("word/settings.xml", settingsXml);
+
+  const updatedBuffer = await zip.generateAsync({ type: "nodebuffer" });
+  await writeFile(filePath, updatedBuffer);
+
+  return { ok: true };
+}
+
+function createBasicSettingsXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:defaultTabStop w:val="720"/>
+</w:settings>`;
+}
+
+function updateCompatibilitySettings(settingsXml: string, props: WordCompatibilityProperties): string {
+  let newXml = settingsXml;
+
+  if (!/<w:settings/i.test(newXml)) {
+    newXml = createBasicSettingsXml();
+  }
+
+  if (!/<w:compat>/i.test(newXml)) {
+    newXml = newXml.replace("</w:settings>", "<w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>");
+  }
+
+  if (props.preset) {
+    const modeValues: Record<string, number> = {
+      word2019: 15,
+      word2010: 14,
+      "css-layout": 15,
+    };
+    const mode = modeValues[props.preset] || 15;
+    const modeRegex = /<w:compatSetting\s+w:name=["']compatibilityMode["'][^>]*\s+w:val=["'](\d+)["'][^>]*>/i;
+    if (modeRegex.test(newXml)) {
+      newXml = newXml.replace(modeRegex, `<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="${mode}"/>`);
+    }
+  }
+
+  if (props.mode !== undefined) {
+    const modeRegex = /<w:compatSetting\s+w:name=["']compatibilityMode["'][^>]*\s+w:val=["'](\d+)["'][^>]*>/i;
+    if (modeRegex.test(newXml)) {
+      newXml = newXml.replace(modeRegex, `<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="${props.mode}"/>`);
+    }
+  }
+
+  return newXml;
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+function getStyleNameFromId(stylesXml: string, styleId: string): string | null {
+  const regex = new RegExp(`<w:style\\b[^>]*\\s+w:styleId=["']${escapeRegex(styleId)}["'][^>]*>[\\s\\S]*?<w:name\\s+w:val=["']([^"']+)["']`, "i");
+  const match = regex.exec(stylesXml);
+  return match ? match[1] : null;
+}
+
+function hasRuns(xml: string, paraIndex: number): boolean {
+  const paraRegex = /<w:p[\\s\\S]*?<\\/w:p>/g;
+  let match;
+  let idx = 0;
+
+  while ((match = paraRegex.exec(xml)) !== null) {
+    idx++;
+    if (idx !== paraIndex) continue;
+
+    const runRegex = /<w:r[\\s\\S]*?<\\/w:r>/g;
+    return runRegex.test(match[0]);
+  }
+
+  return false;
+}
+
+interface RunInfo {
+  text: string;
+  font?: string;
+  size?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: string;
+  color?: string;
+}
+
+function getRunsInfo(xml: string, paraIndex: number): RunInfo[] {
+  const runs: RunInfo[] = [];
+
+  const paraRegex = /<w:p[\\s\\S]*?<\\/w:p>/g;
+  let match;
+  let idx = 0;
+
+  while ((match = paraRegex.exec(xml)) !== null) {
+    idx++;
+    if (idx !== paraIndex) continue;
+
+    const paraXml = match[0];
+    const runRegex = /<w:r[\\s\\S]*?<\\/w:r>/g;
+    let runMatch;
+
+    while ((runMatch = runRegex.exec(paraXml)) !== null) {
+      const runXml = runMatch[0];
+      const textMatch = /<w:t[^>]*>([^<]*)<\/w:t>/i.exec(runXml);
+      const text = textMatch ? textMatch[1] : "";
+
+      const runInfo: RunInfo = { text };
+
+      const rPrMatch = /<w:rPr>([\\s\\S]*?)<\/w:rPr>/i.exec(runXml);
+      if (rPrMatch) {
+        const rPrContent = rPrMatch[1];
+
+        const fontMatch = /<w:rFonts[^>]*w:ascii="([^"]*)"/i.exec(rPrContent);
+        if (fontMatch) runInfo.font = fontMatch[1];
+
+        const sizeMatch = /<w:sz[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+        if (sizeMatch) runInfo.size = `${parseInt(sizeMatch[1], 10) / 2}pt`;
+
+        if (/<w:b[^>]*>/i.test(rPrContent)) runInfo.bold = true;
+        if (/<w:i[^>]*>/i.test(rPrContent)) runInfo.italic = true;
+
+        const underlineMatch = /<w:u[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+        if (underlineMatch) runInfo.underline = underlineMatch[1];
+
+        const colorMatch = /<w:color[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+        if (colorMatch) runInfo.color = colorMatch[1];
+      }
+
+      runs.push(runInfo);
+    }
+    break;
+  }
+
+  return runs;
+}
+
+function formatRunInfo(run: RunInfo): string {
+  const parts: string[] = [];
+  if (run.font) parts.push(`font=${run.font}`);
+  if (run.size) parts.push(`size=${run.size}`);
+  if (run.bold) parts.push("bold");
+  if (run.italic) parts.push("italic");
+  if (run.underline) parts.push(`underline=${run.underline}`);
+  if (run.color) parts.push(`color=${run.color}`);
+  return parts.length > 0 ? parts.join(" ") : "normal";
+}
+
+function getHeadingLevel(styleId: string): number {
+  const match = /Heading(\d+)/i.exec(styleId);
+  if (match) return parseInt(match[1], 10);
+  if (styleId === "Title") return 0;
+  if (styleId === "Subtitle") return 1;
+  return 2;
+}
+
+function hasFirstLineIndent(xml: string, paraIndex: number): boolean {
+  const paraRegex = /<w:p[\\s\\S]*?<\\/w:p>/g;
+  let match;
+  let idx = 0;
+
+  while ((match = paraRegex.exec(xml)) !== null) {
+    idx++;
+    if (idx !== paraIndex) continue;
+
+    const paraXml = match[0];
+    return /<w:ind[^>]*w:firstLine=["'][^0]/.test(paraXml);
+  }
+
+  return false;
+}
+
+function parseStylesForJson(stylesXml: string): Array<{ id: string; name: string; type: string }> {
+  const styles: Array<{ id: string; name: string; type: string }> = [];
+
+  const styleRegex = /<w:style[^>]*>([\\s\\S]*?)<\\/w:style>/g;
+  let match;
+
+  while ((match = styleRegex.exec(stylesXml)) !== null) {
+    const styleXml = match[0];
+
+    const idMatch = /w:styleId="([^"]*)"/.exec(styleXml);
+    const id = idMatch ? idMatch[1] : "";
+
+    const nameMatch = /<w:name[^>]*w:val="([^"]*)"/i.exec(styleXml);
+    const name = nameMatch ? nameMatch[1] : id;
+
+    const typeMatch = /w:type="([^"]*)"/.exec(styleXml);
+    const type = typeMatch ? typeMatch[1] : "paragraph";
+
+    if (id) {
+      styles.push({ id, name, type });
+    }
+  }
+
+  return styles;
+}
+
+function parseFontSizeToHalfPoints(size: string): string {
+  let val = size.trim();
+  if (val.endsWith("pt")) val = val.slice(0, -2).trim();
+  const pts = parseFloat(val);
+  return String(Math.round(pts * 2));
+}
+
+function parseWordSpacing(space: string): string {
+  let val = space.trim();
+  if (val.endsWith("pt")) val = val.slice(0, -2).trim();
+  if (val.endsWith("px")) val = String(parseFloat(val) * 0.75);
+  const pts = parseFloat(val);
+  return String(Math.round(pts * 20));
+}
+
+function parseLineSpacing(lineSpacing: string): string {
+  let val = lineSpacing.trim();
+
+  if (val.endsWith("x")) {
+    const multiplier = parseFloat(val.slice(0, -1));
+    return String(Math.round(multiplier * 240));
+  }
+
+  if (val.endsWith("pt")) {
+    val = val.slice(0, -2).trim();
+  }
+
+  const pts = parseFloat(val);
+  return String(Math.round(pts * 20));
+}
+
+function mapAlignment(align: string): string {
+  switch (align.toLowerCase()) {
+    case "left": return "left";
+    case "center": return "center";
+    case "right": return "right";
+    case "justify":
+    case "both": return "both";
+    default: return align;
+  }
+}
+
+function mapSectionType(type: string): string {
+  switch (type.toLowerCase()) {
+    case "nextpage":
+    case "next": return "nextPage";
+    case "continuous": return "continuous";
+    case "evenpage":
+    case "even": return "evenPage";
+    case "oddpage":
+    case "odd": return "oddPage";
+    case "nextcolumn":
+    case "column": return "nextColumn";
+    default: return type;
+  }
+}
+
+function updateOrAddElement(content: string, tagName: string, newElement: string): string {
+  const regex = new RegExp(`<${tagName}\\b[^>]*//?>`, "i");
+  if (regex.test(content)) {
+    return content.replace(regex, newElement);
+  }
+  return newElement + content;
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function generateBasicCss(): string {
+  return `
+    body { font-family: Calibri, Arial, sans-serif; font-size: 12pt; line-height: 1.5; }
+    p { margin: 0.5em 0; }
+    strong { font-weight: bold; }
+    em { font-style: italic; }
+    u { text-decoration: underline; }
+    .Heading1 { font-size: 24pt; font-weight: bold; margin: 12pt 0 6pt 0; }
+    .Heading2 { font-size: 18pt; font-weight: bold; margin: 10pt 0 4pt 0; }
+    .Heading3 { font-size: 14pt; font-weight: bold; margin: 8pt 0 2pt 0; }
+    table { border-collapse: collapse; }
+    td, th { border: 1px solid #ccc; padding: 4px 8px; }
+  `;
+}
