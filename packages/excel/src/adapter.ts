@@ -3389,12 +3389,13 @@ function evaluateFormulaExpression(
     NOT: (args) => evaluateNotFormula(state, args, sheet, visited),
     TRUE: () => 1,
     FALSE: () => 0,
+    MEDIAN: (args) => evaluateMedianFormula(state, args, sheet, visited),
   };
 
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|ABS|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|ABS|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -3852,6 +3853,14 @@ function evaluateNotFormula(state: ExcelWorkbookState | undefined, args: string,
   if (first === undefined) return 0;
   const val = evaluateInlineFormulaArg(state, first.trim(), sheet, visited);
   return val !== undefined && val !== 0 ? 0 : 1;
+}
+
+function evaluateMedianFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const values = extractFormulaArgValues(state, args, sheet, visited);
+  if (values.length === 0) return undefined;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function evaluateConditionalAggregationFormula(state: ExcelWorkbookState | undefined, formula: string, sheet: ExcelSheetModel) {
