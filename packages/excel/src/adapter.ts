@@ -3304,6 +3304,24 @@ function evaluateFormulaForDisplay(state: ExcelWorkbookState | undefined, sheet:
         return errorResult ?? "";
       }
     }
+    const ifnaMatch = /^IFNA\((.+)\)$/i.exec(normalized.trim());
+    if (ifnaMatch) {
+      const args = splitFormulaArgs(ifnaMatch[1]);
+      if (args.length >= 2) {
+        const valueResult = evaluateInlineFormulaArg(state, args[0].trim(), sheet, new Set());
+        const asNum = Number(valueResult);
+        const isError = valueResult === undefined || Number.isNaN(asNum);
+        if (!isError) {
+          return Number.isInteger(asNum) ? String(asNum) : String(Number(asNum.toFixed(10)));
+        }
+        const errorResult = evaluateInlineFormulaArg(state, args[1].trim(), sheet, new Set());
+        if (errorResult !== undefined) {
+          const asNum2 = Number(errorResult);
+          return Number.isInteger(asNum2) ? String(asNum2) : String(Number(asNum2.toFixed(10)));
+        }
+        return errorResult ?? "";
+      }
+    }
   }
   const visited = new Set<string>();
   const numeric = evaluateFormulaExpression(state, sheet, ref, visited);
@@ -3474,9 +3492,28 @@ function evaluateFormulaExpression(
     VARP: (args) => evaluateVarFormula(state, args, sheet, visited, false),
     RANK: (args) => evaluateRankFormula(state, args, sheet, visited),
     PERCENTILE: (args) => evaluatePercentileFormula(state, args, sheet, visited),
+    PERCENTILE_INC: (args) => evaluatePercentileFormula(state, args, sheet, visited),
     AND: (args) => evaluateAndFormula(state, args, sheet, visited),
     OR: (args) => evaluateOrFormula(state, args, sheet, visited),
     NOT: (args) => evaluateNotFormula(state, args, sheet, visited),
+    XNOR: (args) => {
+      const parts = splitFormulaArgs(args);
+      let trueCount = 0;
+      for (const part of parts) {
+        const val = firstNumericFormulaArg(state, part.trim(), sheet, visited);
+        if (val !== undefined && val !== 0) trueCount++;
+      }
+      return trueCount % 2 === 0 ? 1 : 0;
+    },
+    XOR: (args) => {
+      const parts = splitFormulaArgs(args);
+      let trueCount = 0;
+      for (const part of parts) {
+        const val = firstNumericFormulaArg(state, part.trim(), sheet, visited);
+        if (val !== undefined && val !== 0) trueCount++;
+      }
+      return trueCount % 2 === 1 ? 1 : 0;
+    },
     TRUE: () => 1,
     FALSE: () => 0,
     MEDIAN: (args) => evaluateMedianFormula(state, args, sheet, visited),
@@ -3485,6 +3522,7 @@ function evaluateFormulaExpression(
     ISTEXT: (args) => evaluateIsTextFormula(state, args, sheet),
     ISERROR: (args) => evaluateIsErrorFormula(state, args, sheet),
     ISNA: (args) => evaluateIsNaFormula(state, args, sheet),
+    ISERR: (args) => evaluateIsErrFormula(state, args, sheet),
     ISEVEN: (args) => evaluateIsEvenOddFormula(state, args, sheet, true),
     ISODD: (args) => evaluateIsEvenOddFormula(state, args, sheet, false),
     MODE: (args) => evaluateModeFormula(state, args, sheet, visited),
@@ -3493,6 +3531,12 @@ function evaluateFormulaExpression(
     GEOMEAN: (args) => { const values = extractFormulaArgValues(state, args, sheet, visited).filter(v => v > 0); if (values.length === 0) return undefined; const product = values.reduce((acc, v) => acc * v, 1); return Math.pow(product, 1 / values.length); },
     HARMEAN: (args) => { const values = extractFormulaArgValues(state, args, sheet, visited).filter(v => v > 0); if (values.length === 0) return undefined; const sumReciprocals = values.reduce((acc, v) => acc + 1 / v, 0); if (sumReciprocals === 0) return undefined; return values.length / sumReciprocals; },
     PERCENTRANK: (args) => { const parts = splitFormulaArgs(args); const arrayArg = parts[0] ?? ""; const val = firstNumericFormulaArg(state, parts[1] ?? "0", sheet, visited); const significance = parts[2] !== undefined ? Math.max(0, Math.round(firstNumericFormulaArg(state, parts[2], sheet, visited) ?? 0)) : 0; if (arrayArg.trim() === "" || val === undefined) return undefined; const range = resolveRangeReference(state, arrayArg.trim(), sheet); if (!range) return undefined; const arrValues: number[] = []; for (const row of range.cells) { for (const cell of row) { if (cell && cell.value !== "" && !isNaN(Number(cell.value))) arrValues.push(Number(cell.value)); } } if (arrValues.length === 0) return undefined; arrValues.sort((a, b) => a - b); const countLess = arrValues.filter(v => v < val).length; const n = arrValues.length; if (n === 1) return 1; const rank = countLess / (n - 1); if (significance === 0) return rank; return Math.round(rank * Math.pow(10, significance)) / Math.pow(10, significance); },
+    PERCENTRANK_INC: (args) => { const parts = splitFormulaArgs(args); const arrayArg = parts[0] ?? ""; const val = firstNumericFormulaArg(state, parts[1] ?? "0", sheet, visited); const significance = parts[2] !== undefined ? Math.max(0, Math.round(firstNumericFormulaArg(state, parts[2], sheet, visited) ?? 0)) : 0; if (arrayArg.trim() === "" || val === undefined) return undefined; const range = resolveRangeReference(state, arrayArg.trim(), sheet); if (!range) return undefined; const arrValues: number[] = []; for (const row of range.cells) { for (const cell of row) { if (cell && cell.value !== "" && !isNaN(Number(cell.value))) arrValues.push(Number(cell.value)); } } if (arrValues.length === 0) return undefined; arrValues.sort((a, b) => a - b); const countLess = arrValues.filter(v => v < val).length; const n = arrValues.length; if (n === 1) return 1; const rank = countLess / (n - 1); if (significance === 0) return rank; return Math.round(rank * Math.pow(10, significance)) / Math.pow(10, significance); },
+    CEILING: (args) => { const parts = splitFormulaArgs(args); const num = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0; const sig = Math.abs(firstNumericFormulaArg(state, parts[1] ?? "1", sheet, visited) ?? 1); if (sig === 0) return 0; return sig * Math.ceil(Math.abs(num) / sig) * (num >= 0 ? 1 : -1); },
+    FLOOR: (args) => { const parts = splitFormulaArgs(args); const num = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0; const sig = Math.abs(firstNumericFormulaArg(state, parts[1] ?? "1", sheet, visited) ?? 1); if (sig === 0) return 0; return sig * Math.floor(Math.abs(num) / sig) * (num >= 0 ? 1 : -1); },
+    CEILING_MATH: (args) => { const parts = splitFormulaArgs(args); const num = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0; const sig = parts[1] !== undefined ? Math.abs(firstNumericFormulaArg(state, parts[1], sheet, visited) ?? 1) : Math.sign(num) || 1; const mode = parts[2] !== undefined ? (firstNumericFormulaArg(state, parts[2], sheet, visited) ?? 0) : 0; if (sig === 0) return 0; if (num >= 0) return sig * Math.ceil(num / sig); if (mode !== 0) return sig * Math.ceil(num / sig); return sig * Math.floor(Math.abs(num) / sig) * -1; },
+    FLOOR_MATH: (args) => { const parts = splitFormulaArgs(args); const num = firstNumericFormulaArg(state, parts[0] ?? "0", sheet, visited) ?? 0; const sig = parts[1] !== undefined ? Math.abs(firstNumericFormulaArg(state, parts[1], sheet, visited) ?? 1) : Math.sign(num) || 1; const mode = parts[2] !== undefined ? (firstNumericFormulaArg(state, parts[2], sheet, visited) ?? 0) : 0; if (sig === 0) return 0; if (num >= 0) return sig * Math.floor(num / sig); if (mode !== 0) return sig * Math.floor(num / sig); return sig * Math.ceil(Math.abs(num) / sig) * -1; },
+    DECIMAL: (args) => { const parts = splitFormulaArgs(args); const text = parts[0]?.replace(/"/g, "") ?? ""; const base = Math.round(firstNumericFormulaArg(state, parts[1] ?? "10", sheet, visited) ?? 10); if (base < 2 || base > 36) return undefined; const n = parseInt(text, base); return Number.isFinite(n) ? n : undefined; },
     SIN: (args) => {
       const value = firstNumericFormulaArg(state, args, sheet, visited);
       return value === undefined ? undefined : Math.sin(value);
@@ -3534,6 +3578,18 @@ function evaluateFormulaExpression(
     TANH: (args) => {
       const value = firstNumericFormulaArg(state, args, sheet, visited);
       return value === undefined ? undefined : Math.tanh(value);
+    },
+    ASINH: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.asinh(value);
+    },
+    ACOSH: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined || value < 1 ? undefined : Math.acosh(value);
+    },
+    ATANH: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined || value <= -1 || value >= 1 ? undefined : Math.atanh(value);
     },
     DEGREES: (args) => {
       const value = firstNumericFormulaArg(state, args, sheet, visited);
@@ -3619,7 +3675,7 @@ function evaluateFormulaExpression(
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|GEOMEAN|HARMEAN|PERCENTRANK|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ISLOGICAL|ISNONTEXT|TYPE|NA|ERROR_TYPE|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|SLN|SYD|DB|DDB|STDEV|STDEVP|VAR|VARP|STDEV_S|STDEV_P|VAR_S|VAR_P|RANK|PERCENTILE|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE|SIN|COS|TAN|ASIN|ACOS|ATAN|ATAN2|SINH|COSH|TANH|DEGREES|RADIANS|FACT|COMBIN|PERMUT|GCD|LCM|EVEN|ODD|MROUND|MODE_SNGL|RANK_EQ|PERCENTILE_INC|BIN2DEC|HEX2DEC|OCT2DEC|SWITCH|ROMAN|ARABIC)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|XNOR|XOR|MEDIAN|MODE|LARGE|SMALL|GEOMEAN|HARMEAN|PERCENTRANK|PERCENTRANK_INC|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISERR|ISEVEN|ISODD|ISLOGICAL|ISNONTEXT|TYPE|NA|ERROR_TYPE|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV|NPER|NPV|IPMT|PPMT|SLN|SYD|DB|DDB|STDEV|STDEVP|VAR|VARP|STDEV_S|STDEV_P|VAR_S|VAR_P|RANK|PERCENTILE|PRODUCT|QUOTIENT|COUNTBLANK|ROW|COLUMN|ROWS|COLUMNS|IFS|CHOOSE|SIN|COS|TAN|ASIN|ACOS|ACOSH|ATAN|ATAN2|ASINH|ATANH|SINH|COSH|TANH|DEGREES|RADIANS|FACT|COMBIN|PERMUT|GCD|LCM|EVEN|ODD|MROUND|CEILING|FLOOR|CEILING_MATH|FLOOR_MATH|DECIMAL|MODE_SNGL|RANK_EQ|PERCENTILE_INC|BIN2DEC|HEX2DEC|OCT2DEC|SWITCH|ROMAN|ARABIC)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -3770,7 +3826,7 @@ function evaluateRoundFormula(
 }
 
 function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, expression: string, sheet: ExcelSheetModel) {
-  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT|PROPER|CLEAN|REPT|CHAR|CODE|TEXT|FIXED|NUMBERVALUE|DOLLAR|YEN|T|N|DEC2BIN|DEC2HEX|DEC2OCT|BIN2HEX|BIN2OCT|HEX2BIN|HEX2OCT|OCT2BIN|OCT2HEX|SWITCH|ADDRESS)\((.*)\)$/i.exec(expression);
+  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT|PROPER|CLEAN|REPT|CHAR|CODE|TEXT|FIXED|NUMBERVALUE|DOLLAR|YEN|T|N|VALUE|DEC2BIN|DEC2HEX|DEC2OCT|BIN2HEX|BIN2OCT|HEX2BIN|HEX2OCT|OCT2BIN|OCT2HEX|SWITCH|ADDRESS)\((.*)\)$/i.exec(expression);
   if (!direct) return undefined;
   const fn = direct[1].toUpperCase();
   const args = splitFormulaArgs(direct[2]);
@@ -3894,6 +3950,11 @@ function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, ex
   if (fn === "N") {
     const val = firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set());
     return val ?? 0;
+  }
+  if (fn === "VALUE") {
+    const text = resolveText(args[0] ?? "");
+    const n = Number(text.replace(/,/g, "").trim());
+    return Number.isFinite(n) ? String(n) : undefined;
   }
   if (fn === "DEC2BIN") { const n = Math.round(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0); const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(2); if (places > 0) s = s.padStart(places, '0'); return s; }
   if (fn === "DEC2HEX") { const n = Math.round(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0); const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(16).toUpperCase(); if (places > 0) s = s.padStart(places, '0'); return s; }
@@ -4449,6 +4510,12 @@ function evaluateIsErrorFormula(state: ExcelWorkbookState | undefined, args: str
 }
 
 function evaluateIsNaFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel) {
+  const parts = splitFormulaArgs(args);
+  const val = firstNumericFormulaArg(state, parts[0] ?? "", sheet, new Set());
+  return val === undefined ? 1 : 0;
+}
+
+function evaluateIsErrFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel) {
   const parts = splitFormulaArgs(args);
   const val = firstNumericFormulaArg(state, parts[0] ?? "", sheet, new Set());
   return val === undefined ? 1 : 0;
