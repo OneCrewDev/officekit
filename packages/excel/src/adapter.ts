@@ -3384,12 +3384,17 @@ function evaluateFormulaExpression(
       const value = firstNumericFormulaArg(state, args, sheet, visited);
       return value === undefined || value < 0 ? undefined : Math.sqrt(value);
     },
+    AND: (args) => evaluateAndFormula(state, args, sheet, visited),
+    OR: (args) => evaluateOrFormula(state, args, sheet, visited),
+    NOT: (args) => evaluateNotFormula(state, args, sheet, visited),
+    TRUE: () => 1,
+    FALSE: () => 0,
   };
 
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|ABS|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|ABS|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
@@ -3821,6 +3826,32 @@ function evaluateLookupFormulaForDisplay(state: ExcelWorkbookState | undefined, 
   }
 
   return undefined;
+}
+
+function evaluateAndFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const parts = splitFormulaArgs(args);
+  for (const part of parts) {
+    const val = evaluateInlineFormulaArg(state, part.trim(), sheet, visited);
+    if (val === undefined || val === 0) return 0;
+  }
+  return 1;
+}
+
+function evaluateOrFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const parts = splitFormulaArgs(args);
+  for (const part of parts) {
+    const val = evaluateInlineFormulaArg(state, part.trim(), sheet, visited);
+    if (val !== undefined && val !== 0) return 1;
+  }
+  return 0;
+}
+
+function evaluateNotFormula(state: ExcelWorkbookState | undefined, args: string, sheet: ExcelSheetModel, visited: Set<string>) {
+  const parts = splitFormulaArgs(args);
+  const first = parts[0];
+  if (first === undefined) return 0;
+  const val = evaluateInlineFormulaArg(state, first.trim(), sheet, visited);
+  return val !== undefined && val !== 0 ? 0 : 1;
 }
 
 function evaluateConditionalAggregationFormula(state: ExcelWorkbookState | undefined, formula: string, sheet: ExcelSheetModel) {
