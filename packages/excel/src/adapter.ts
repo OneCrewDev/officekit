@@ -3412,6 +3412,24 @@ function evaluateFormulaExpression(
       const top = firstNumericFormulaArg(state, parts[1] ?? "1", sheet, visited) ?? 1;
       return Math.floor(bottom) + Math.floor(Math.random() * (Math.floor(top) - Math.floor(bottom) + 1));
     },
+    LOG: (args) => {
+      const parts = splitFormulaArgs(args);
+      const num = firstNumericFormulaArg(state, parts[0] ?? "1", sheet, visited) ?? 1;
+      const base = parts.length > 1 ? (firstNumericFormulaArg(state, parts[1], sheet, visited) ?? 10) : 10;
+      return num <= 0 ? undefined : Math.log(num) / Math.log(base);
+    },
+    LOG10: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined || value <= 0 ? undefined : Math.log10(value);
+    },
+    LN: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined || value <= 0 ? undefined : Math.log(value);
+    },
+    EXP: (args) => {
+      const value = firstNumericFormulaArg(state, args, sheet, visited);
+      return value === undefined ? undefined : Math.exp(value);
+    },
     PMT: (args) => evaluatePmtFormula(state, args, sheet, visited),
     FV: (args) => evaluateFvFormula(state, args, sheet, visited),
     PV: (args) => evaluatePvFormula(state, args, sheet, visited),
@@ -3436,7 +3454,7 @@ function evaluateFormulaExpression(
   let replaced = true;
   while (replaced) {
     replaced = false;
-    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|PMT|FV|PV)\(([^()]*)\)/gi, (match, fn, args) => {
+    expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX|COUNT|COUNTA|SUMPRODUCT|IF|AND|OR|NOT|MEDIAN|MODE|LARGE|SMALL|ISBLANK|ISNUMBER|ISTEXT|ISERROR|ISNA|ISEVEN|ISODD|ABS|INT|TRUNC|SIGN|ROUND|ROUNDUP|ROUNDDOWN|MOD|POWER|SQRT|PI|RAND|RANDBETWEEN|LOG|LOG10|LN|EXP|PMT|FV|PV)\(([^()]*)\)/gi, (match, fn, args) => {
       const result = functionEvaluators[fn.toUpperCase()]?.(args);
       if (result === undefined) {
         return match;
