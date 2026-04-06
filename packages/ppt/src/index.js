@@ -18,3 +18,12 @@ export * from "./path.js";
 
 // Selector grammar parser
 export * from "./selectors.js";
+
+// Slide management
+export * from "./slides.js";
+
+// Layout operations
+export * from "./layouts.js";
+
+// Notes management
+export * from "./notes.js";
