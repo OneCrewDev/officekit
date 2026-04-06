@@ -487,7 +487,7 @@ export async function queryExcelNodes(filePath: string, selector: string) {
   if (normalized === "validation" || normalized === "validations") {
     for (const sheet of state.sheets) {
       parseValidations(sheet.xml).forEach((validation, index) => {
-        nodes.push({ ...validation, path: `/${sheet.name}/validation[${index + 1}]`, type: "validation" });
+        nodes.push({ ...validation, ...(validation.type ? { validationType: validation.type } : {}), path: `/${sheet.name}/validation[${index + 1}]`, type: "validation" });
       });
     }
     return nodes;
@@ -527,7 +527,7 @@ export async function queryExcelNodes(filePath: string, selector: string) {
   if (normalized === "sparkline" || normalized === "sparklines") {
     for (const sheet of state.sheets) {
       parseSparklines(sheet.xml).forEach((sparkline, index) => {
-        nodes.push({ ...sparkline, path: `/${sheet.name}/sparkline[${index + 1}]`, type: "sparkline" });
+        nodes.push({ ...sparkline, ...(sparkline.type ? { sparklineType: sparkline.type } : {}), path: `/${sheet.name}/sparkline[${index + 1}]`, type: "sparkline" });
       });
     }
     return nodes;
@@ -589,9 +589,13 @@ export async function rawExcelDocument(
   }
   const chartMatch = /^\/([^/]+)\/chart\[(\d+)\]$/i.exec(partPath);
   if (chartMatch) {
-    return requireEntry(state.zip, getSheetCharts(state, ensureSheetState(state, chartMatch[1]))[Number(chartMatch[2]) - 1]?.path
-      ? normalizeZipPath("xl", getSheetCharts(state, ensureSheetState(state, chartMatch[1]))[Number(chartMatch[2]) - 1]!.path)
-      : (() => { throw new OfficekitError(`Chart ${chartMatch[2]} not found.`, "not_found"); })());
+    const sheet = ensureSheetState(state, chartMatch[1]);
+    const chart = getSheetCharts(state, sheet)[Number(chartMatch[2]) - 1];
+    const drawingPath = resolveDrawingPath(state, sheet);
+    if (!chart?.path || !drawingPath) {
+      throw new OfficekitError(`Chart ${chartMatch[2]} not found.`, "not_found");
+    }
+    return requireEntry(state.zip, normalizeZipPath(path.posix.dirname(drawingPath), chart.path));
   }
   const globalChartMatch = /^\/chart\[(\d+)\]$/i.exec(partPath);
   if (globalChartMatch) {
@@ -600,7 +604,12 @@ export async function rawExcelDocument(
     if (!chart?.path) {
       throw new OfficekitError(`Chart ${globalChartMatch[1]} not found.`, "not_found");
     }
-    return requireEntry(state.zip, normalizeZipPath("xl", chart.path));
+    const ownerSheet = state.sheets.find((sheet) => getSheetCharts(state, sheet).some((candidate) => candidate.path === chart.path));
+    const drawingPath = ownerSheet ? resolveDrawingPath(state, ownerSheet) : undefined;
+    if (!drawingPath) {
+      throw new OfficekitError(`Chart ${globalChartMatch[1]} drawing is missing.`, "invalid_ooxml");
+    }
+    return requireEntry(state.zip, normalizeZipPath(path.posix.dirname(drawingPath), chart.path));
   }
   const sheetMatch = /^\/([^/]+)$/i.exec(partPath);
   if (sheetMatch) {
@@ -779,7 +788,7 @@ function materializeExcelPath(state: ExcelWorkbookState, targetPath: string): un
     const sheet = ensureSheetState(state, validationMatch[1]);
     const validation = parseValidations(sheet.xml)[Number(validationMatch[2]) - 1];
     if (!validation) throw new OfficekitError(`Validation ${validationMatch[2]} does not exist.`, "not_found");
-    return { ...validation, path: targetPath, type: "validation" };
+    return { ...validation, ...(validation.type ? { validationType: validation.type } : {}), path: targetPath, type: "validation" };
   }
   const commentMatch = /^\/([^/]+)\/comment\[(\d+)\]$/i.exec(targetPath);
   if (commentMatch) {
@@ -814,7 +823,7 @@ function materializeExcelPath(state: ExcelWorkbookState, targetPath: string): un
     const sheet = ensureSheetState(state, sparklineMatch[1]);
     const sparkline = parseSparklines(sheet.xml)[Number(sparklineMatch[2]) - 1];
     if (!sparkline) throw new OfficekitError(`Sparkline ${sparklineMatch[2]} does not exist.`, "not_found");
-    return { ...sparkline, path: targetPath, type: "sparkline" };
+    return { ...sparkline, ...(sparkline.type ? { sparklineType: sparkline.type } : {}), path: targetPath, type: "sparkline" };
   }
   const shapeMatch = /^\/([^/]+)\/(shape|picture)\[(\d+)\]$/i.exec(targetPath);
   if (shapeMatch) {
@@ -1408,6 +1417,107 @@ function setTable(state: ExcelWorkbookState, sheet: ExcelSheetModel, index: numb
   return next;
 }
 
+function setSparkline(sheet: ExcelSheetModel, index: number, props: Record<string, string>) {
+  const sparklines = [...sheet.xml.matchAll(/<x14:sparklineGroup\b([^>]*)>([\s\S]*?)<\/x14:sparklineGroup>/g)];
+  let sparklineIndex = 0;
+  let updatedSparkline: ExcelSparklineModel | undefined;
+  for (const groupMatch of sparklines) {
+    const fullGroup = groupMatch[0];
+    const groupAttrs = groupMatch[1];
+    const sparklineBlocks = [...fullGroup.matchAll(/<x14:sparkline\b[\s\S]*?<\/x14:sparkline>/g)];
+    for (const sparklineBlock of sparklineBlocks) {
+      sparklineIndex += 1;
+      if (sparklineIndex !== index) {
+        continue;
+      }
+      let nextGroup = fullGroup;
+      let nextSparkline = sparklineBlock[0];
+      if (props.location !== undefined) {
+        nextSparkline = nextSparkline.replace(/<xm:sqref>[\s\S]*?<\/xm:sqref>/, `<xm:sqref>${escapeXml(props.location)}</xm:sqref>`);
+      }
+      if (props.sourceRange !== undefined || props.range !== undefined) {
+        nextSparkline = nextSparkline.replace(/<xm:f>[\s\S]*?<\/xm:f>/, `<xm:f>${escapeXml(props.sourceRange ?? props.range ?? "")}</xm:f>`);
+      }
+      if (props.type !== undefined) {
+        const nextType = props.type.toLowerCase();
+        if (/type="[^"]+"/.test(nextGroup)) {
+          nextGroup = nextGroup.replace(/type="[^"]+"/, `type="${escapeXml(nextType)}"`);
+        } else {
+          nextGroup = nextGroup.replace(/<x14:sparklineGroup\b/, `<x14:sparklineGroup type="${escapeXml(nextType)}"`);
+        }
+      }
+      nextGroup = nextGroup.replace(sparklineBlock[0], nextSparkline);
+      sheet.xml = sheet.xml.replace(fullGroup, nextGroup);
+      updatedSparkline = {
+        ...parseSparklines(sheet.xml)[index - 1],
+      };
+      return updatedSparkline;
+    }
+  }
+  throw new OfficekitError(`Sparkline ${index} does not exist.`, "not_found");
+}
+
+function setChart(
+  state: ExcelWorkbookState,
+  sheet: ExcelSheetModel,
+  index: number,
+  seriesIndex: number | undefined,
+  props: Record<string, string>,
+) {
+  const chart = getSheetCharts(state, sheet)[index - 1];
+  if (!chart) {
+    throw new OfficekitError(`Chart ${index} does not exist.`, "not_found");
+  }
+  const xmlPath = normalizeZipPath(path.posix.dirname(resolveDrawingPath(state, sheet) ?? sheet.entryName), chart.path);
+  let xml = requireEntry(state.zip, xmlPath);
+  if (seriesIndex !== undefined) {
+    const seriesMatches = [...xml.matchAll(/<c:ser\b[\s\S]*?<\/c:ser>/g)];
+    const series = seriesMatches[seriesIndex - 1];
+    if (!series) {
+      throw new OfficekitError(`Chart series ${seriesIndex} does not exist.`, "not_found");
+    }
+    let nextSeries = series[0];
+    if (props.name !== undefined || props.title !== undefined || props.text !== undefined) {
+      const value = props.name ?? props.title ?? props.text ?? "";
+      if (/<c:tx>[\s\S]*?<\/c:tx>/.test(nextSeries)) {
+        nextSeries = nextSeries.replace(/<c:tx>[\s\S]*?<\/c:tx>/, `<c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>${escapeXml(value)}</c:v></c:pt></c:strCache></c:strRef></c:tx>`);
+      } else {
+        nextSeries = nextSeries.replace(/<c:idx\b[^>]*\/>/, `$&<c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>${escapeXml(value)}</c:v></c:pt></c:strCache></c:strRef></c:tx>`);
+      }
+    }
+    xml = xml.replace(series[0], nextSeries);
+  } else if (props.title !== undefined || props.name !== undefined || props.text !== undefined) {
+    const value = props.title ?? props.name ?? props.text ?? "";
+    if (/<c:title>[\s\S]*?<\/c:title>/.test(xml)) {
+      xml = xml.replace(/<c:title>[\s\S]*?<\/c:title>/, `<c:title><c:tx><c:rich><a:p><a:r><a:t>${escapeXml(value)}</a:t></a:r></a:p></c:rich></c:tx></c:title>`);
+    } else {
+      xml = xml.replace(/<c:chart\b[^>]*>/, `$&<c:title><c:tx><c:rich><a:p><a:r><a:t>${escapeXml(value)}</a:t></a:r></a:p></c:rich></c:tx></c:title>`);
+    }
+  }
+  state.zip.set(xmlPath, Buffer.from(xml, "utf8"));
+  return seriesIndex !== undefined
+    ? { ...getSheetCharts(state, sheet)[index - 1], series: { index: seriesIndex } }
+    : getSheetCharts(state, sheet)[index - 1];
+}
+
+function setPivotTable(state: ExcelWorkbookState, sheet: ExcelSheetModel, index: number, props: Record<string, string>) {
+  const pivot = getSheetPivots(state, sheet)[index - 1];
+  if (!pivot) {
+    throw new OfficekitError(`Pivot table ${index} does not exist.`, "not_found");
+  }
+  const xmlPath = normalizeZipPath(path.posix.dirname(sheet.entryName), pivot.path);
+  let xml = requireEntry(state.zip, xmlPath);
+  if (props.name !== undefined) {
+    if (/\bname="[^"]+"/.test(xml)) {
+      xml = xml.replace(/\bname="[^"]+"/, `name="${escapeXml(props.name)}"`);
+    } else {
+      xml = xml.replace(/<pivotTableDefinition\b/, `<pivotTableDefinition name="${escapeXml(props.name)}"`);
+    }
+  }
+  state.zip.set(xmlPath, Buffer.from(xml, "utf8"));
+  return { ...pivot, ...(props.name !== undefined ? { name: props.name } : {}) };
+}
+
 function normalizeSheetPath(targetPath: string) {
   return targetPath.replace(/^\//, "") || "Sheet1";
 }
@@ -1670,9 +1780,10 @@ function getSheetPivots(state: ExcelWorkbookState, sheet: ExcelSheetModel) {
 }
 
 function parseSparklines(sheetXml: string) {
-  return [...sheetXml.matchAll(/<x14:sparkline\b[\s\S]*?<xm:f>([\s\S]*?)<\/xm:f>[\s\S]*?<xm:sqref>([\s\S]*?)<\/xm:sqref>[\s\S]*?<\/x14:sparkline>/g)].map((match) => ({
-    sourceRange: decodeXml(match[1]).trim(),
-    location: decodeXml(match[2]).trim(),
+  return [...sheetXml.matchAll(/<x14:sparklineGroup\b([^>]*)>[\s\S]*?<x14:sparkline\b[\s\S]*?<xm:f>([\s\S]*?)<\/xm:f>[\s\S]*?<xm:sqref>([\s\S]*?)<\/xm:sqref>[\s\S]*?<\/x14:sparkline>[\s\S]*?<\/x14:sparklineGroup>/g)].map((match) => ({
+    ...(parseAttr(match[1], "type") ? { type: parseAttr(match[1], "type") } : {}),
+    sourceRange: decodeXml(match[2]).trim(),
+    location: decodeXml(match[3]).trim(),
   }));
 }
 

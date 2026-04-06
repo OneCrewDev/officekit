@@ -290,6 +290,59 @@ describe("officekit CLI scaffold", () => {
     expect(sheetRaw.stdout).toContain('r="A1"');
   });
 
+  test("supports advanced Excel object mutation paths", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-advanced-"));
+    const filePath = path.join(dir, "advanced.xlsx");
+    await writeFile(filePath, buildExternalExcelAdvancedObjectsZip());
+
+    const beforeValidation = await runCli(["get", filePath, "/Sheet1/validation[1]", "--json"]);
+    const beforeComment = await runCli(["get", filePath, "/Sheet1/comment[1]", "--json"]);
+    const beforeTable = await runCli(["get", filePath, "/Sheet1/table[1]", "--json"]);
+    const beforeChart = await runCli(["get", filePath, "/Sheet1/chart[1]", "--json"]);
+    const beforePivot = await runCli(["get", filePath, "/Sheet1/pivottable[1]", "--json"]);
+    const beforeSparkline = await runCli(["get", filePath, "/Sheet1/sparkline[1]", "--json"]);
+
+    expect(beforeValidation.stdout).toContain('"validationType": "list"');
+    expect(beforeComment.stdout).toContain('"text": "Initial note"');
+    expect(beforeTable.stdout).toContain('"name": "Table1"');
+    expect(beforeChart.stdout).toContain('"title": "Initial Chart"');
+    expect(beforePivot.stdout).toContain('"name": "PivotTable1"');
+    expect(beforeSparkline.stdout).toContain('"location": "C2"');
+
+    await runCli(["set", filePath, "/Sheet1/validation[1]", "--prop", "formula1=Yes,No", "--prop", "prompt=Pick one"]);
+    await runCli(["set", filePath, "/Sheet1/comment[1]", "--prop", "text=Updated note", "--prop", "author=officekit"]);
+    await runCli(["set", filePath, "/Sheet1/table[1]", "--prop", "name=SalesTable", "--prop", "ref=A1:B3", "--prop", "totalsrow=true"]);
+    await runCli(["set", filePath, "/Sheet1/sparkline[1]", "--prop", "type=column", "--prop", "location=D2", "--prop", "sourceRange=A2:B2"]);
+    await runCli(["set", filePath, "/Sheet1/chart[1]", "--prop", "title=Updated Chart"]);
+    await runCli(["set", filePath, "/Sheet1/chart[1]/series[1]", "--prop", "name=Revenue Series"]);
+    await runCli(["set", filePath, "/Sheet1/pivottable[1]", "--prop", "name=Pivot Summary"]);
+
+    const validation = await runCli(["get", filePath, "/Sheet1/validation[1]", "--json"]);
+    const comment = await runCli(["get", filePath, "/Sheet1/comment[1]", "--json"]);
+    const table = await runCli(["get", filePath, "/Sheet1/table[1]", "--json"]);
+    const chart = await runCli(["get", filePath, "/Sheet1/chart[1]", "--json"]);
+    const pivot = await runCli(["get", filePath, "/Sheet1/pivottable[1]", "--json"]);
+    const sparkline = await runCli(["get", filePath, "/Sheet1/sparkline[1]", "--json"]);
+    const sparklineQuery = await runCli(["query", filePath, "sparkline"]);
+    const rawChart = await runCli(["raw", filePath, "/Sheet1/chart[1]"]);
+
+    expect(validation.stdout).toContain('"formula1": "Yes,No"');
+    expect(validation.stdout).toContain('"prompt": "Pick one"');
+    expect(comment.stdout).toContain('"text": "Updated note"');
+    expect(comment.stdout).toContain('"author": "officekit"');
+    expect(table.stdout).toContain('"name": "SalesTable"');
+    expect(table.stdout).toContain('"ref": "A1:B3"');
+    expect(table.stdout).toContain('"totalsRow": true');
+    expect(chart.stdout).toContain('"title": "Updated Chart"');
+    expect(pivot.stdout).toContain('"name": "Pivot Summary"');
+    expect(sparkline.stdout).toContain('"location": "D2"');
+    expect(sparkline.stdout).toContain('"sourceRange": "A2:B2"');
+    expect(sparkline.stdout).toContain('"sparklineType": "column"');
+    expect(sparklineQuery.stdout).toContain('"type": "sparkline"');
+    expect(rawChart.stdout).toContain("Updated Chart");
+    expect(rawChart.stdout).toContain("Revenue Series");
+  });
+
   test("creates and mutates a PowerPoint document vertical slice", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-ppt-"));
     const filePath = path.join(dir, "demo.pptx");
@@ -1467,6 +1520,163 @@ function buildExternalExcelSheetExtrasZip() {
   <rowBreaks count="1" manualBreakCount="1"><brk id="5" man="1"/></rowBreaks>
   <colBreaks count="1" manualBreakCount="1"><brk id="2" man="1"/></colBreaks>
 </worksheet>`),
+    },
+  ]);
+}
+
+function buildExternalExcelAdvancedObjectsZip() {
+  return createStoredZip([
+    {
+      name: "[Content_Types].xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/comments1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>
+  <Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>
+  <Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>
+  <Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>
+  <Override PartName="/xl/pivotTables/pivotTable1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>
+</Types>`),
+    },
+    {
+      name: "_rels/.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/workbook.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`),
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>Name</t></is></c>
+      <c r="B1" t="inlineStr"><is><t>Value</t></is></c>
+    </row>
+    <row r="2">
+      <c r="A2" t="inlineStr"><is><t>Alpha</t></is></c>
+      <c r="B2"><v>10</v></c>
+    </row>
+  </sheetData>
+  <dataValidations count="1">
+    <dataValidation type="list" sqref="A2" allowBlank="1"><formula1>"Yes,No"</formula1></dataValidation>
+  </dataValidations>
+  <drawing r:id="rId3"/>
+  <extLst>
+    <ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}">
+      <x14:sparklineGroups>
+        <x14:sparklineGroup type="line">
+          <x14:sparklines>
+            <x14:sparkline>
+              <xm:f>Sheet1!A2:B2</xm:f>
+              <xm:sqref>C2</xm:sqref>
+            </x14:sparkline>
+          </x14:sparklines>
+        </x14:sparklineGroup>
+      </x14:sparklineGroups>
+    </ext>
+  </extLst>
+</worksheet>`),
+    },
+    {
+      name: "xl/worksheets/_rels/sheet1.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table1.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>
+  <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="../pivotTables/pivotTable1.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/comments1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <authors><author>Author 1</author></authors>
+  <commentList>
+    <comment ref="A2" authorId="0"><text><r><t>Initial note</t></r></text></comment>
+  </commentList>
+</comments>`),
+    },
+    {
+      name: "xl/tables/table1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Table1" displayName="Table1" ref="A1:B2" totalsRowShown="0" headerRowCount="1">
+  <autoFilter ref="A1:B2"/>
+  <tableColumns count="2">
+    <tableColumn id="1" name="Name"/>
+    <tableColumn id="2" name="Value"/>
+  </tableColumns>
+  <tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>
+</table>`),
+    },
+    {
+      name: "xl/drawings/drawing1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>0</xdr:col><xdr:row>4</xdr:row></xdr:from>
+    <xdr:to><xdr:col>5</xdr:col><xdr:row>12</xdr:row></xdr:to>
+    <xdr:graphicFrame macro="">
+      <xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>
+      <xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>
+      <a:graphic>
+        <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+          <c:chart r:id="rId1"/>
+        </a:graphicData>
+      </a:graphic>
+    </xdr:graphicFrame>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>
+</xdr:wsDr>`),
+    },
+    {
+      name: "xl/drawings/_rels/drawing1.xml.rels",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>
+</Relationships>`),
+    },
+    {
+      name: "xl/charts/chart1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <c:chart>
+    <c:title><c:tx><c:rich><a:p><a:r><a:t>Initial Chart</a:t></a:r></a:p></c:rich></c:tx></c:title>
+    <c:plotArea>
+      <c:barChart>
+        <c:ser>
+          <c:idx val="0"/>
+          <c:order val="0"/>
+          <c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Initial Series</c:v></c:pt></c:strCache></c:strRef></c:tx>
+        </c:ser>
+      </c:barChart>
+    </c:plotArea>
+  </c:chart>
+</c:chartSpace>`),
+    },
+    {
+      name: "xl/pivotTables/pivotTable1.xml",
+      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="PivotTable1"/>`),
     },
   ]);
 }
