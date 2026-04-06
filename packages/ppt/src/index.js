@@ -41,6 +41,9 @@ export * from "./shapes.js";
 // Connector operations (addConnector, getConnectors, setConnectorEndpoints, removeConnector, setConnectorStyle)
 export * from "./connectors.js";
 
+// Group operations (groupShapes, ungroupShapes, getGroupChildren, addShapeToGroup, removeShapeFromGroup, getGroup)
+export * from "./groups.js";
+
 // Table mutations
 export * from "./tables.js";
 
