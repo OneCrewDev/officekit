@@ -339,10 +339,24 @@ export async function addExcelNode(filePath: string, targetPath: string, options
     return { ...sparkline, ...(sparkline.type ? { sparklineType: sparkline.type } : {}), path: `/${sheet.name}/sparkline[${parseSparklines(sheet.xml).length}]`, type: "sparkline" };
   }
 
+  if (options.type === "chart") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const chart = addChart(state, sheet, options.props);
+    await writeWorkbookState(filePath, state);
+    return { ...chart, path: `/${sheet.name}/chart[${getSheetCharts(state, sheet).length}]`, type: "chart" };
+  }
+
+  if (options.type === "pivottable" || options.type === "pivot") {
+    const sheet = ensureSheetState(state, normalizeSheetPath(targetPath));
+    const pivot = addPivotTable(state, sheet, options.props);
+    await writeWorkbookState(filePath, state);
+    return { ...pivot, path: `/${sheet.name}/pivottable[${getSheetPivots(state, sheet).length}]`, type: "pivottable" };
+  }
+
   if (options.type !== "cell") {
     throw new UsageError(
-      "Excel add currently supports: sheet, row, cell, namedrange, validation, comment, autofilter, rowbreak, colbreak, table, or sparkline.",
-      "Use / with --type sheet|namedrange, or /Sheet1 with --type row|cell|validation|comment|autofilter|rowbreak|colbreak|table|sparkline.",
+      "Excel add currently supports: sheet, row, cell, namedrange, validation, comment, autofilter, rowbreak, colbreak, table, sparkline, chart, or pivottable.",
+      "Use / with --type sheet|namedrange, or /Sheet1 with --type row|cell|validation|comment|autofilter|rowbreak|colbreak|table|sparkline|chart|pivottable.",
     );
   }
 
@@ -1691,6 +1705,76 @@ function addSparkline(sheet: ExcelSheetModel, props: Record<string, string>) {
   return parseSparklines(sheet.xml).at(-1)!;
 }
 
+function addChart(state: ExcelWorkbookState, sheet: ExcelSheetModel, props: Record<string, string>) {
+  const drawingPath = ensureDrawingPart(state, sheet);
+  const chartPath = nextIndexedPartPath(state.zip, "xl/charts/chart", ".xml");
+  const drawingRelId = appendRelationship(
+    state.zip,
+    getRelationshipsEntryName(drawingPath),
+    drawingPath,
+    chartPath,
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+  );
+  const chartData = resolveChartAddData(state, sheet, props);
+  state.zip.set(chartPath, Buffer.from(buildChartXml(chartData), "utf8"));
+
+  const drawingXml = requireEntry(state.zip, drawingPath);
+  const nextAnchorId = Math.max(
+    1,
+    ...[...drawingXml.matchAll(/<xdr:cNvPr\b[^>]*id="(\d+)"/g)].map((match) => Number(match[1])),
+  ) + 1;
+  const fromCol = Number(props.x ?? "0");
+  const fromRow = Number(props.y ?? "0");
+  const toCol = fromCol + Number(props.width ?? "8");
+  const toRow = fromRow + Number(props.height ?? "15");
+  const chartName = props.title ?? props.name ?? `Chart ${nextAnchorId}`;
+  const anchorXml = `  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>${fromCol}</xdr:col><xdr:row>${fromRow}</xdr:row></xdr:from>
+    <xdr:to><xdr:col>${toCol}</xdr:col><xdr:row>${toRow}</xdr:row></xdr:to>
+    <xdr:graphicFrame macro="">
+      <xdr:nvGraphicFramePr><xdr:cNvPr id="${nextAnchorId}" name="${escapeXml(chartName)}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>
+      <xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>
+      <a:graphic>
+        <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+          <c:chart r:id="${escapeXml(drawingRelId)}"/>
+        </a:graphicData>
+      </a:graphic>
+    </xdr:graphicFrame>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>`;
+  state.zip.set(drawingPath, Buffer.from(drawingXml.replace(/<\/xdr:wsDr>/, `${anchorXml}\n</xdr:wsDr>`), "utf8"));
+  return getSheetCharts(state, sheet).at(-1) ?? { title: chartData.title, path: path.posix.relative(path.posix.dirname(drawingPath), chartPath), sheet: sheet.name };
+}
+
+function addPivotTable(state: ExcelWorkbookState, sheet: ExcelSheetModel, props: Record<string, string>) {
+  const source = props.source ?? props.src;
+  if (!source) {
+    throw new UsageError("Excel pivottable requires --prop source=Sheet1!A1:D10.");
+  }
+  const pivotIndex = Math.max(
+    0,
+    ...[...state.zip.keys()].map((entryName) => Number(/^xl\/pivotTables\/pivotTable(\d+)\.xml$/i.exec(entryName)?.[1] ?? "0")),
+  ) + 1;
+  const pivotPath = `xl/pivotTables/pivotTable${pivotIndex}.xml`;
+  const name = props.name ?? `PivotTable${pivotIndex}`;
+  const rowGrandTotals = props.rowGrandTotals === undefined && props.rowgrandtotals === undefined ? true : isTruthy(props.rowGrandTotals ?? props.rowgrandtotals ?? "false");
+  const colGrandTotals = props.colGrandTotals === undefined && props.colgrandtotals === undefined ? true : isTruthy(props.colGrandTotals ?? props.colgrandtotals ?? "false");
+  const compact = props.compact === undefined ? true : isTruthy(props.compact);
+  const compactData = props.compactData === undefined && props.compactdata === undefined ? true : isTruthy(props.compactData ?? props.compactdata ?? "false");
+  const outline = props.outline === undefined ? false : isTruthy(props.outline);
+  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="${escapeXml(name)}" dataCaption="Values" rowGrandTotals="${rowGrandTotals ? 1 : 0}" colGrandTotals="${colGrandTotals ? 1 : 0}" compact="${compact ? 1 : 0}" compactData="${compactData ? 1 : 0}" outline="${outline ? 1 : 0}" location="${escapeXml(props.position ?? props.pos ?? "H1")}" source="${escapeXml(source)}"/>`;
+  state.zip.set(pivotPath, Buffer.from(xml, "utf8"));
+  appendRelationship(
+    state.zip,
+    getRelationshipsEntryName(sheet.entryName),
+    sheet.entryName,
+    pivotPath,
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable",
+  );
+  return getSheetPivots(state, sheet).at(-1) ?? { name, path: path.posix.relative(path.posix.dirname(sheet.entryName), pivotPath) };
+}
+
 function setComment(state: ExcelWorkbookState, sheet: ExcelSheetModel, index: number, props: Record<string, string>) {
   const commentsPath = resolveCommentsPath(state, sheet);
   if (!commentsPath) {
@@ -2454,6 +2538,32 @@ function resolveDrawingPath(state: ExcelWorkbookState, sheet: ExcelSheetModel) {
   const worksheetRelsPath = getRelationshipsEntryName(sheet.entryName);
   const rel = readRelationships(state.zip, worksheetRelsPath).find((relationship) => relationship.id === drawingRelId);
   return rel ? normalizeZipPath(path.posix.dirname(sheet.entryName), rel.target) : undefined;
+}
+
+function ensureDrawingPart(state: ExcelWorkbookState, sheet: ExcelSheetModel) {
+  const existing = resolveDrawingPath(state, sheet);
+  if (existing) return existing;
+  const drawingPath = nextIndexedPartPath(state.zip, "xl/drawings/drawing", ".xml");
+  state.zip.set(drawingPath, Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+</xdr:wsDr>`, "utf8"));
+  sheet.xml = ensureWorksheetNamespaces(sheet.xml, {
+    r: "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+  });
+  const relId = appendRelationship(
+    state.zip,
+    getRelationshipsEntryName(sheet.entryName),
+    sheet.entryName,
+    drawingPath,
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing",
+  );
+  sheet.xml = replaceOrInsert(
+    sheet.xml,
+    /<(?:\w+:)?drawing\b[^>]*\/?>/,
+    `<drawing r:id="${escapeXml(relId)}"/>`,
+    /<(?:\w+:)?tableParts\b[\s\S]*?<\/(?:\w+:)?tableParts>|<(?:\w+:)?extLst\b[\s\S]*?<\/(?:\w+:)?extLst>|<(?:\w+:)?colBreaks\b[\s\S]*?<\/(?:\w+:)?colBreaks>|<(?:\w+:)?rowBreaks\b[\s\S]*?<\/(?:\w+:)?rowBreaks>|<(?:\w+:)?headerFooter\b[\s\S]*?<\/(?:\w+:)?headerFooter>|<(?:\w+:)?pageSetup\b[^>]*\/?>|<(?:\w+:)?sheetProtection\b[^>]*\/?>|<(?:\w+:)?autoFilter\b[^>]*\/?>|<(?:\w+:)?sheetData\b[\s\S]*?<\/(?:\w+:)?sheetData>/,
+  );
+  return drawingPath;
 }
 
 function parseSharedStrings(zip: Map<string, Buffer>) {
@@ -3400,6 +3510,117 @@ function renderTableXml(input: {
   </tableColumns>
   <tableStyleInfo name="${escapeXml(input.styleName)}" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>
 </table>`;
+}
+
+function resolveChartAddData(state: ExcelWorkbookState, sheet: ExcelSheetModel, props: Record<string, string>) {
+  const chartType = (props.charttype ?? props.type ?? "column").toLowerCase();
+  const title = props.title ?? props.name;
+  const dataRange = props.datarange ?? props.dataRange ?? props.range;
+  if (dataRange) {
+    const { sheet: sourceSheet, range } = resolveChartRangeSource(state, sheet, dataRange);
+    const { categories, series } = parseChartRangeData(sourceSheet, range);
+    if (series.length === 0) {
+      throw new UsageError("Excel chart dataRange must contain at least one series row.");
+    }
+    return { chartType, title, categories, series };
+  }
+  const categories = (props.categories ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+  const seriesFromData = parseChartDataProp(props.data);
+  const seriesFromNamedProps = Object.entries(props)
+    .filter(([key]) => /^series\d+$/i.test(key))
+    .map(([, value], index) => parseChartSeriesString(value, `Series ${index + 1}`));
+  const series = [...seriesFromData, ...seriesFromNamedProps];
+  if (series.length === 0) {
+    throw new UsageError("Excel chart requires --prop data=Series:1,2,3 or --prop dataRange=Sheet1!A1:D4.");
+  }
+  const normalizedCategories = categories.length > 0 ? categories : Array.from({ length: series[0].values.length }, (_, index) => `Category ${index + 1}`);
+  return { chartType, title, categories: normalizedCategories, series };
+}
+
+function resolveChartRangeSource(state: ExcelWorkbookState, defaultSheet: ExcelSheetModel, source: string) {
+  const [sheetPart, rangePart] = source.includes("!") ? source.split("!", 2) : [defaultSheet.name, source];
+  return {
+    sheet: ensureSheetState(state, sheetPart.replace(/^['"]|['"]$/g, "")),
+    range: rangePart.toUpperCase(),
+  };
+}
+
+function parseChartRangeData(sheet: ExcelSheetModel, range: string) {
+  const refs = expandRange(range);
+  const start = parseCellAddress(range.split(":")[0]);
+  const end = parseCellAddress(range.split(":")[1] ?? range.split(":")[0]);
+  const rows = new Map<number, string[]>();
+  for (const ref of refs) {
+    const address = parseCellAddress(ref);
+    const rowValues = rows.get(address.row) ?? [];
+    const value = sheet.cells[ref]?.value ?? "";
+    rowValues.push(value);
+    rows.set(address.row, rowValues);
+  }
+  const orderedRows = [...rows.entries()].sort(([a], [b]) => a - b).map(([, values]) => values);
+  if (orderedRows.length < 2 || columnNameToIndex(end.column) - columnNameToIndex(start.column) < 1) {
+    return { categories: [] as string[], series: [] as Array<{ name: string; values: number[] }> };
+  }
+  const categories = orderedRows[0].slice(1).map((value, index) => value || `Category ${index + 1}`);
+  const series = orderedRows.slice(1).map((values, index) => ({
+    name: values[0] || `Series ${index + 1}`,
+    values: values.slice(1).map((value) => Number(value || "0")),
+  }));
+  return { categories, series };
+}
+
+function parseChartDataProp(raw: string | undefined) {
+  if (!raw) return [] as Array<{ name: string; values: number[] }>;
+  return raw
+    .split(";")
+    .map((chunk, index) => parseChartSeriesString(chunk, `Series ${index + 1}`))
+    .filter((series) => series.values.length > 0);
+}
+
+function parseChartSeriesString(raw: string, fallbackName: string) {
+  const [namePart, valuesPart = ""] = raw.split(":", 2);
+  const values = valuesPart
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter((item) => !Number.isNaN(item));
+  return {
+    name: namePart.trim() || fallbackName,
+    values,
+  };
+}
+
+function buildChartXml(input: { chartType: string; title?: string; categories: string[]; series: Array<{ name: string; values: number[] }> }) {
+  const chartTag = input.chartType === "line" ? "lineChart" : input.chartType === "pie" ? "pieChart" : input.chartType === "area" ? "areaChart" : "barChart";
+  const seriesXml = input.series.map((series, index) => {
+    const categoryPoints = input.categories.map((category, categoryIndex) => `<c:pt idx="${categoryIndex}"><c:v>${escapeXml(category)}</c:v></c:pt>`).join("");
+    const valuePoints = series.values.map((value, valueIndex) => `<c:pt idx="${valueIndex}"><c:v>${value}</c:v></c:pt>`).join("");
+    return `<c:ser>
+          <c:idx val="${index}"/>
+          <c:order val="${index}"/>
+          <c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>${escapeXml(series.name)}</c:v></c:pt></c:strCache></c:strRef></c:tx>
+          <c:cat><c:strRef><c:strCache><c:ptCount val="${input.categories.length}"/>${categoryPoints}</c:strCache></c:strRef></c:cat>
+          <c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${series.values.length}"/>${valuePoints}</c:numCache></c:numRef></c:val>
+        </c:ser>`;
+  }).join("");
+  const titleXml = input.title ? `<c:title><c:tx><c:rich><a:p><a:r><a:t>${escapeXml(input.title)}</a:t></a:r></a:p></c:rich></c:tx></c:title>` : "";
+  const chartBody = chartTag === "barChart"
+    ? `<c:barDir val="col"/><c:grouping val="clustered"/>${seriesXml}<c:axId val="1"/><c:axId val="2"/>`
+    : `${seriesXml}${chartTag === "pieChart" ? "" : '<c:axId val="1"/><c:axId val="2"/>'}`;
+  const axesXml = chartTag === "pieChart"
+    ? ""
+    : `<c:catAx><c:axId val="1"/></c:catAx><c:valAx><c:axId val="2"/></c:valAx>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <c:chart>
+    ${titleXml}
+    <c:plotArea>
+      <c:${chartTag}>
+        ${chartBody}
+      </c:${chartTag}>
+      ${axesXml}
+    </c:plotArea>
+  </c:chart>
+</c:chartSpace>`;
 }
 
 function upsertTablePartReference(sheetXml: string, relId: string) {

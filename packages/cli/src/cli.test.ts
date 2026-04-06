@@ -421,6 +421,58 @@ describe("officekit CLI scaffold", () => {
     expect(sheetXml).toContain('<x14:sparklineGroup type="column">');
   });
 
+  test("adds Excel chart and pivottable objects through OfficeCLI-style add paths", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-add-chart-pivot-"));
+    const filePath = path.join(dir, "add-chart-pivot.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=Metric"]);
+    await runCli(["set", filePath, "/Sheet1/B1", "--prop", "value=Jan"]);
+    await runCli(["set", filePath, "/Sheet1/C1", "--prop", "value=Feb"]);
+    await runCli(["set", filePath, "/Sheet1/A2", "--prop", "value=Revenue"]);
+    await runCli(["set", filePath, "/Sheet1/B2", "--prop", "value=10", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/C2", "--prop", "value=20", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A3", "--prop", "value=Cost"]);
+    await runCli(["set", filePath, "/Sheet1/B3", "--prop", "value=6", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/C3", "--prop", "value=9", "--prop", "type=number"]);
+
+    await runCli(["add", filePath, "/Sheet1", "--type", "chart", "--prop", "title=Quarterly Trend", "--prop", "type=column", "--prop", "dataRange=Sheet1!A1:C3", "--prop", "x=1", "--prop", "y=2", "--prop", "width=6", "--prop", "height=8"]);
+    await runCli(["add", filePath, "/Sheet1", "--type", "pivottable", "--prop", "source=Sheet1!A1:C3", "--prop", "name=SalesPivot", "--prop", "position=H1"]);
+    await runCli(["set", filePath, "/Sheet1/pivottable[1]", "--prop", "rowGrandTotals=false"]);
+
+    const chart = await runCli(["get", filePath, "/Sheet1/chart[1]", "--json"]);
+    const pivot = await runCli(["get", filePath, "/Sheet1/pivottable[1]", "--json"]);
+    const chartQuery = await runCli(["query", filePath, "chart"]);
+    const pivotQuery = await runCli(["query", filePath, "pivottable"]);
+    const rawChart = await runCli(["raw", filePath, "/Sheet1/chart[1]"]);
+    const rawDrawing = await runCli(["raw", filePath, "/Sheet1/drawing"]);
+
+    expect(chart.stdout).toContain('"title": "Quarterly Trend"');
+    expect(chart.stdout).toContain('"chartType": "bar"');
+    expect(chart.stdout).toContain('"seriesNames"');
+    expect(chart.stdout).toContain('Revenue');
+    expect(pivot.stdout).toContain('"name": "SalesPivot"');
+    expect(pivot.stdout).toContain('"rowGrandTotals": false');
+    expect(chartQuery.stdout).toContain('"type": "chart"');
+    expect(pivotQuery.stdout).toContain('"type": "pivottable"');
+    expect(rawChart.stdout).toContain("Quarterly Trend");
+    expect(rawChart.stdout).toContain("Revenue");
+    expect(rawDrawing.stdout).toContain("<c:chart");
+
+    const zip = readStoredZip(await readFile(filePath));
+    const contentTypes = zip.get("[Content_Types].xml")!.toString("utf8");
+    const sheetRels = zip.get("xl/worksheets/_rels/sheet1.xml.rels")!.toString("utf8");
+    const drawingRels = zip.get("xl/drawings/_rels/drawing1.xml.rels")!.toString("utf8");
+    const pivotXml = zip.get("xl/pivotTables/pivotTable1.xml")!.toString("utf8");
+
+    expect(contentTypes).toContain("/xl/charts/chart1.xml");
+    expect(contentTypes).toContain("/xl/pivotTables/pivotTable1.xml");
+    expect(sheetRels).toContain("/relationships/drawing");
+    expect(sheetRels).toContain("/relationships/pivotTable");
+    expect(drawingRels).toContain("/relationships/chart");
+    expect(pivotXml).toContain('name="SalesPivot"');
+    expect(pivotXml).toContain('rowGrandTotals="0"');
+  });
+
   test("evaluates simple formulas for display and creates styles from cell props", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-style-formula-"));
     const filePath = path.join(dir, "style-formula.xlsx");
