@@ -10,7 +10,7 @@ import {
   removeHyperlink,
   setExternalHyperlink,
   setInternalHyperlink,
-} from "../src/hyperlinks.ts";
+} from "../src/hyperlinks.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 

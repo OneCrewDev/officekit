@@ -309,16 +309,22 @@ export async function getAnimations(
 ): Promise<Result<SlideAnimationsResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code ?? "load_failed", zipResult.error?.message ?? "Failed to load presentation");
   }
   const zip = zipResult.data;
+  if (!zip) {
+    return err("operation_failed", "Failed to load presentation");
+  }
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
   }
 
   const slideEntry = slidePathResult.data;
+  if (!slideEntry) {
+    return err("slide_not_found", "Slide entry not found");
+  }
   const slideXml = requireEntry(zip, slideEntry);
 
   const animations = getAnimationsFromSlideXml(slideXml, slideIndex);
@@ -356,10 +362,13 @@ export async function removeAnimation(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Extract shape index from path
@@ -472,10 +481,13 @@ export async function setAnimation(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Extract shape index from path

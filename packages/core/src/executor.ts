@@ -1,5 +1,6 @@
-import { createDocument, addDocumentNode, checkDocument, getDocumentNode, importDelimitedData, parseProps, queryDocumentNodes, rawDocument, removeDocumentNode, renderDocumentHtml, setDocumentNode, viewDocument } from "./document-store.js";
+import { createDocument, addDocumentNode, checkDocument, getDocumentNode, importDelimitedData, loadDocument, parseProps, queryDocumentNodes, rawDocument, removeDocumentNode, renderDocumentHtml, setDocumentNode, viewDocument, moveDocumentNode, swapDocumentNodes, copyDocumentNode } from "./document-store.js";
 import { UnsupportedCapabilityError, UsageError } from "./errors.js";
+import { summarizeParity } from "./parity.js";
 
 export interface CommandResult {
   exitCode: number;
@@ -197,7 +198,7 @@ export async function executeCommand(argv: string[]): Promise<CommandResult> {
     const session = await preview.startPreviewSession({
       filePath,
       port,
-      render: async () => renderDocumentHtml(await getDocumentNode(filePath, "/") as never),
+      render: async () => renderDocumentHtml(await loadDocument(filePath)),
     });
     const waitUntilClose = new Promise<void>((resolve) => {
       const shutdown = async () => {
@@ -217,6 +218,158 @@ export async function executeCommand(argv: string[]): Promise<CommandResult> {
       stdout: JSON.stringify({ ok: true, url: session.url, port: session.port }, null, 2),
       waitUntilClose,
     };
+  }
+
+  if (command === "move") {
+    const filePath = rest[0];
+    const sourcePath = rest[1];
+    const targetPath = rest[2];
+    if (!filePath || !sourcePath || !targetPath) {
+      throw new UsageError("move requires <file> <source-path> <target-path>.");
+    }
+    let after: string | undefined;
+    let before: string | undefined;
+    for (let index = 3; index < rest.length; index += 1) {
+      const token = rest[index];
+      if (token === "--after") {
+        after = rest[index + 1];
+        index += 1;
+        continue;
+      }
+      if (token === "--before") {
+        before = rest[index + 1];
+        index += 1;
+        continue;
+      }
+    }
+    const result = await moveDocumentNode(filePath, sourcePath, targetPath, { after, before });
+    return { exitCode: 0, stdout: JSON.stringify(result, null, 2) };
+  }
+
+  if (command === "swap") {
+    const filePath = rest[0];
+    const path1 = rest[1];
+    const path2 = rest[2];
+    if (!filePath || !path1 || !path2) {
+      throw new UsageError("swap requires <file> <path1> <path2>.");
+    }
+    const result = await swapDocumentNodes(filePath, path1, path2);
+    return { exitCode: 0, stdout: JSON.stringify(result, null, 2) };
+  }
+
+  if (command === "copy") {
+    const filePath = rest[0];
+    const sourcePath = rest[1];
+    const targetPath = rest[2];
+    if (!filePath || !sourcePath || !targetPath) {
+      throw new UsageError("copy requires <file> <source-path> <target-path>.");
+    }
+    let index: number | undefined;
+    let after: string | undefined;
+    let before: string | undefined;
+    for (let i = 3; i < rest.length; i += 1) {
+      const token = rest[i];
+      if (token === "--index") {
+        index = Number(rest[i + 1]);
+        i += 1;
+        continue;
+      }
+      if (token === "--after") {
+        after = rest[i + 1];
+        i += 1;
+        continue;
+      }
+      if (token === "--before") {
+        before = rest[i + 1];
+        i += 1;
+        continue;
+      }
+    }
+    const result = await copyDocumentNode(filePath, sourcePath, targetPath, { index, after, before });
+    return { exitCode: 0, stdout: JSON.stringify(result, null, 2) };
+  }
+
+  if (command === "batch") {
+    const filePath = rest[0];
+    if (!filePath) throw new UsageError("batch requires <file>.");
+    let operationsJson = "";
+    let useStdin = false;
+    for (let index = 1; index < rest.length; index += 1) {
+      const token = rest[index];
+      if (token === "--stdin") {
+        useStdin = true;
+        continue;
+      }
+      if (!token.startsWith("--")) {
+        operationsJson = token;
+      }
+    }
+    let operations: Array<{ action: string; target: string; options?: Record<string, unknown> }>;
+    if (useStdin) {
+      operationsJson = await new Promise<string>((resolve, reject) => {
+        let buffer = "";
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", (chunk) => {
+          buffer += chunk;
+        });
+        process.stdin.once("end", () => resolve(buffer));
+        process.stdin.once("error", reject);
+      });
+    }
+    try {
+      operations = JSON.parse(operationsJson);
+    } catch {
+      return { exitCode: 1, stderr: "Failed to parse operations JSON" };
+    }
+    const results = [];
+    for (const op of operations) {
+      const { action, target, options = {} } = op;
+      try {
+        let result;
+        switch (action.toLowerCase()) {
+          case "add": {
+            const cmdOpts = { type: options.type as string | undefined, props: (options.props as Record<string, string>) ?? {}, json: false };
+            result = await addDocumentNode(filePath, target, cmdOpts);
+            break;
+          }
+          case "set": {
+            const cmdOpts = { type: options.type as string | undefined, props: (options.props as Record<string, string>) ?? {}, json: false };
+            result = await setDocumentNode(filePath, target, cmdOpts);
+            break;
+          }
+          case "remove":
+            result = await removeDocumentNode(filePath, target);
+            break;
+          case "get":
+            result = await getDocumentNode(filePath, target);
+            break;
+          case "query":
+            result = await queryDocumentNodes(filePath, target);
+            break;
+          default:
+            result = { ok: false, error: { code: "unknown_action", message: `Unknown action: ${action}` } };
+        }
+        results.push({ action, target, status: (result as { ok?: boolean }).ok ? "success" : "failed", result });
+      } catch (e) {
+        results.push({ action, target, status: "error", error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return { exitCode: 0, stdout: JSON.stringify({ ok: true, results }, null, 2) };
+  }
+
+  if (command === "about") {
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({ product: "officekit", version: "1.0.0" }, null, 2),
+    };
+  }
+
+  if (command === "contracts") {
+    const format = rest[0];
+    if (format === "--format" && rest[1] === "json") {
+      return { exitCode: 0, stdout: JSON.stringify(summarizeParity(), null, 2) };
+    }
+    return { exitCode: 0, stdout: JSON.stringify(summarizeParity(), null, 2) };
   }
 
   return { exitCode: 2, stderr: `Command '${command}' is not implemented yet in the current vertical slice.` };

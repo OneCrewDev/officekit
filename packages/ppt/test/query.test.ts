@@ -18,7 +18,7 @@ import {
   getTextContent,
   getTableStructure,
   getChartData,
-} from "../src/query.ts";
+} from "../src/query.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -61,8 +61,8 @@ test("getShape - returns shape at path", async () => {
     const result = await getShape(tempPath, "/slide[1]/shape[1]");
     // Shape might not exist in test file, but should either return shape or not_found
     if (result.ok) {
-      assert.ok(result.data.path);
-      assert.ok(result.data.type);
+      assert.ok(result.data!.path);
+      assert.ok(result.data!.type);
     } else {
       assert.ok(result.error?.code === "not_found" || result.error?.code === "invalid_input");
     }
@@ -87,8 +87,8 @@ test("getPlaceholder - returns placeholder by type", async () => {
     const result = await getPlaceholder(tempPath, 1, "title");
     // May succeed or fail depending on whether title placeholder exists
     if (result.ok) {
-      assert.ok(result.data.path);
-      assert.ok(result.data.type === "title");
+      assert.ok(result.data!.path);
+      assert.ok(result.data!.type === "title");
     }
   } finally {
     // Clean up

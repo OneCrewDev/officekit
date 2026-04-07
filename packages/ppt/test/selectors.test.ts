@@ -17,7 +17,7 @@ import {
   isCellSelector,
   isRowSelector,
   normalizePlaceholderTypeName,
-} from "../src/selectors.ts";
+} from "../src/selectors.js";
 
 test("parseSelector - parses basic selectors", () => {
   const result = parseSelector("slide[1]");

@@ -279,7 +279,7 @@ function extractModels3DFromSlide(
 
     // Extract rotation from a:scene3d
     let rotX: number | undefined;
-    let rotY: number | number;
+    let rotY: number | undefined;
     let rotZ: number | undefined;
 
     const rotMatch = /<a:rot(?:[^>]*)>([\s\S]*?)<\/a:rot>/.exec(spXml);
@@ -358,10 +358,13 @@ export async function get3DModels(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     const relsXml = requireEntry(zip, relsEntry);
@@ -417,10 +420,13 @@ export async function add3DModel(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     let relsXml = "";
@@ -578,10 +584,13 @@ export async function remove3DModel(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     const relsXml = requireEntry(zip, relsEntry);
@@ -665,10 +674,13 @@ export async function set3DModelRotation(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Find all shapes with scene3d to locate the target model

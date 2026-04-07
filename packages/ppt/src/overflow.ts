@@ -373,16 +373,16 @@ export async function checkShapeTextOverflow(
 
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error!.code, slidePathResult.error!.message);
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   // Extract shape index
@@ -466,16 +466,16 @@ export async function checkSlideOverflow(
 ): Promise<Result<SlideOverflowResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error!.code, slidePathResult.error!.message);
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   const shapes = parseShapesFromSlideXml(slideXml, slideIndex);
@@ -538,15 +538,15 @@ export async function getOverflowIssues(
 ): Promise<Result<OverflowIssuesResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidesInfoResult = getAllSlideEntries(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error!.code, slidesInfoResult.error!.message);
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   // Filter to specific slide if requested
   const targetSlides = slideIndex

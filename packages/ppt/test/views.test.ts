@@ -322,18 +322,18 @@ test("checkShapeTextOverflow - checks shape for text overflow", async () => {
   try {
     // First get a valid shape path
     const textResult = await viewAsText(tempPath);
-    if (!textResult.ok || textResult.data.slides[0].shapes.length === 0) {
+    if (!textResult.ok || textResult.data!.slides[0].shapes.length === 0) {
       // Skip if no shapes
       return;
     }
 
-    const shapePath = textResult.data.slides[0].shapes[0].path;
+    const shapePath = textResult.data!.slides[0].shapes[0].path;
     const result = await checkShapeTextOverflow(tempPath, shapePath);
 
     if (result.ok) {
-      assert.ok(typeof result.data.hasOverflow === "boolean");
-      assert.ok(typeof result.data.path === "string");
-      assert.equal(result.data.path, shapePath);
+      assert.ok(typeof result.data!.hasOverflow === "boolean");
+      assert.ok(typeof result.data!.path === "string");
+      assert.equal(result.data!.path, shapePath);
     }
   } finally {
     // Clean up

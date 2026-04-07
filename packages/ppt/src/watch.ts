@@ -190,7 +190,7 @@ export async function watch(
     version: 0,
     clients,
   };
-  let watcher: fs.StatWatcher | null = null;
+  let watcher: fs.FSWatcher | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let server: http.Server | null = null;
   let actualPort = 0;
@@ -212,7 +212,7 @@ export async function watch(
       };
     } else {
       // Extract just the slide content (not the full document)
-      const slideHtml = extractBodyHtml(htmlResult.data.html);
+      const slideHtml = extractBodyHtml(htmlResult.data!.html);
       state = {
         ...state,
         html: wrapBodyHtml(slideHtml, path.basename(filePath)),
@@ -313,7 +313,7 @@ export async function watch(
         close: async () => {
           // Clean up
           if (debounceTimer) clearTimeout(debounceTimer);
-          if (watcher) watcher.close();
+          if (watcher) watcher!.close();
           if (server) {
             for (const client of clients) {
               client.end();

@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 
 import {
   viewAsHtml,
-  viewAsSvg,
   generatePreview,
 } from "../src/preview-html.js";
 

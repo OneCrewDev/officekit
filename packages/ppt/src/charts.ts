@@ -443,10 +443,13 @@ export async function getChart(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     const relsXml = requireEntry(zip, relsEntry);
@@ -503,10 +506,13 @@ export async function addChart(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     let relsXml = "";
@@ -721,10 +727,13 @@ export async function setChartData(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     const relsXml = requireEntry(zip, relsEntry);
@@ -826,10 +835,13 @@ export async function setChartType(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     const relsXml = requireEntry(zip, relsEntry);

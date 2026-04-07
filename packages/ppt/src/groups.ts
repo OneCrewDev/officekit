@@ -257,7 +257,7 @@ export async function groupShapes(
     // Parse the parent path to determine slide index
     const parsedParent = parsePath(pptPath);
     if (!parsedParent.ok) {
-      return parsedParent;
+      return err(parsedParent.error?.code ?? "invalid_path", parsedParent.error?.message ?? "Failed to parse path");
     }
 
     const slideIndex = getSlideIndex(pptPath);
@@ -270,10 +270,13 @@ export async function groupShapes(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Get all shapes and find the ones to group
@@ -433,10 +436,13 @@ export async function ungroupShapes(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Find the group
@@ -551,10 +557,13 @@ export async function getGroupChildren(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Find the group
@@ -649,10 +658,13 @@ export async function addShapeToGroup(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Get all shapes
@@ -776,10 +788,13 @@ export async function removeShapeFromGroup(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Find the group
@@ -892,10 +907,13 @@ export async function getGroup(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Find the group

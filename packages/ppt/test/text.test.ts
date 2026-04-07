@@ -9,8 +9,8 @@ import {
   setTextRuns,
   addTextParagraph,
   setTextFormat,
-} from "../src/text.ts";
-import { addSlide } from "../src/slides.ts";
+} from "../src/text.js";
+import { addSlide } from "../src/slides.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 

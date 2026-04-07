@@ -8,7 +8,7 @@ import {
   checkShapeTextOverflow,
   checkSlideOverflow,
   getOverflowIssues,
-} from "../src/overflow.ts";
+} from "../src/overflow.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 

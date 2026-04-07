@@ -187,18 +187,26 @@ export function parsePath(path: string): Result<ParsedPath> {
   }
 
   // Parse sequential segments
-  const segments: PathSegment[] = [];
   let remaining = path;
+  const segments: PathSegment[] = [];
 
-  while (remaining.length > 0 && remaining !== "/") {
-    const segmentResult = parseSegment(remaining);
-    if (!segmentResult.ok) {
-      return segmentResult;
-    }
-
-    const { segment, rest } = segmentResult.data as { segment: PathSegment; rest: string };
+  const parseResult = andThen(parseSegment(remaining), ({ segment, rest }) => {
     segments.push(segment);
     remaining = rest;
+    while (remaining.length > 0 && remaining !== "/") {
+      const innerResult = parseSegment(remaining);
+      if (!innerResult.ok) {
+        return innerResult as Result<never>;
+      }
+      const { segment: seg, rest: r } = innerResult.data as { segment: PathSegment; rest: string };
+      segments.push(seg);
+      remaining = r;
+    }
+    return ok({ segments }) as Result<{ segments: PathSegment[] }>;
+  });
+
+  if (!parseResult.ok) {
+    return parseResult as Result<ParsedPath>;
   }
 
   if (segments.length === 0) {
@@ -206,12 +214,7 @@ export function parsePath(path: string): Result<ParsedPath> {
   }
 
   // Validate segment sequence
-  const validationResult = validateSegmentSequence(segments);
-  if (!validationResult.ok) {
-    return validationResult;
-  }
-
-  return ok({ isAbsolute, segments, original });
+  return andThen(validateSegmentSequence(segments), () => ok({ isAbsolute, segments, original }));
 }
 
 /**

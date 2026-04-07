@@ -187,11 +187,11 @@ export async function setTableCell(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message, slidePathResult.error!.suggestion);
     }
 
     const slideEntry = slidePathResult.data;
-    const slideXml = requireEntry(zip, slideEntry);
+    const slideXml = requireEntry(zip, slideEntry!);
 
     const updatedSlideXml = setCellTextInTable(slideXml, tableIndex, rowIndex, cellIndex, text);
 
@@ -353,11 +353,11 @@ export async function removeTableRow(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message, slidePathResult.error!.suggestion);
     }
 
     const slideEntry = slidePathResult.data;
-    const slideXml = requireEntry(zip, slideEntry);
+    const slideXml = requireEntry(zip, slideEntry!);
 
     const updatedSlideXml = removeRowFromTable(slideXml, tableIndex, rowIndex);
 
@@ -454,11 +454,11 @@ export async function removeTableColumn(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message, slidePathResult.error!.suggestion);
     }
 
     const slideEntry = slidePathResult.data;
-    const slideXml = requireEntry(zip, slideEntry);
+    const slideXml = requireEntry(zip, slideEntry!);
 
     const updatedSlideXml = removeColumnFromTable(slideXml, tableIndex, columnIndex);
 
@@ -591,11 +591,11 @@ export async function addTable(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message, slidePathResult.error!.suggestion);
     }
 
     const slideEntry = slidePathResult.data;
-    const slideXml = requireEntry(zip, slideEntry);
+    const slideXml = requireEntry(zip, slideEntry!);
 
     // Count existing tables to determine new table index
     const tablePattern = /<a:tbl>[\s\S]*?<\/a:tbl>/g;
@@ -742,11 +742,11 @@ export async function setTableStyle(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message, slidePathResult.error!.suggestion);
     }
 
     const slideEntry = slidePathResult.data;
-    const slideXml = requireEntry(zip, slideEntry);
+    const slideXml = requireEntry(zip, slideEntry!);
 
     const updatedSlideXml = setTableStyleInSlide(slideXml, tableIndex, styleId);
 
@@ -835,22 +835,22 @@ export async function insertTableRow(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message, slidePathResult.error!.suggestion);
     }
 
     const slideEntry = slidePathResult.data;
-    const slideXml = requireEntry(zip, slideEntry);
+    const slideXml = requireEntry(zip, slideEntry!);
 
     const result = insertRowInTable(slideXml, tableIndex, beforeIndex);
     if (!result.ok) {
-      return result;
+      return err(result.error!.code, result.error!.message, result.error!.suggestion);
     }
 
     // Build new zip with updated slide
     const newEntries: Array<{ name: string; data: Buffer }> = [];
     for (const [name, data] of zip.entries()) {
       if (name === slideEntry) {
-        newEntries.push({ name, data: Buffer.from(result.data, "utf8") });
+        newEntries.push({ name, data: Buffer.from(result.data!, "utf8") });
       } else {
         newEntries.push({ name, data });
       }
@@ -987,11 +987,11 @@ export async function insertTableColumn(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message, slidePathResult.error!.suggestion);
     }
 
     const slideEntry = slidePathResult.data;
-    const slideXml = requireEntry(zip, slideEntry);
+    const slideXml = requireEntry(zip, slideEntry!);
 
     const updatedSlideXml = insertColumnInTable(slideXml, tableIndex, beforeIndex);
 
@@ -1141,11 +1141,11 @@ export async function mergeTableCells(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message, slidePathResult.error!.suggestion);
     }
 
     const slideEntry = slidePathResult.data;
-    const slideXml = requireEntry(zip, slideEntry);
+    const slideXml = requireEntry(zip, slideEntry!);
 
     const updatedSlideXml = mergeCellsInTable(slideXml, tableIndex, startRow, startCol, endRow, endCol);
 

@@ -16,6 +16,14 @@ import {
 
 import { pptTools } from "../src/mcp-tools.js";
 
+/**
+ * MCP tool call result structure.
+ */
+interface McpToolResult {
+  content: Array<{ type: string; text: string }>;
+  isError?: boolean;
+}
+
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
 const DATA_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/data_presentation.pptx";
@@ -184,8 +192,8 @@ test("McpServer.executeTool - returns error for missing filePath", async () => {
   const result = await server["executeTool"]("Add", {});
 
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "invalid_input");
-  assert.ok(result.error.message.includes("filePath"));
+  assert.equal(result.error!.code, "invalid_input");
+  assert.ok(result.error!.message.includes("filePath"));
 });
 
 test("McpServer.executeTool - Add tool adds a slide", async () => {
@@ -197,7 +205,7 @@ test("McpServer.executeTool - Add tool adds a slide", async () => {
 
     assert.ok(result.ok, `Add failed: ${result.error?.message}`);
     assert.ok(result.data);
-    assert.ok(result.data.path);
+    assert.ok((result.data as { path: string }).path);
   } finally {
     // Clean up
   }
@@ -229,8 +237,9 @@ test("McpServer.executeTool - ViewAsText tool returns text", async () => {
 
     assert.ok(result.ok, `ViewAsText failed: ${result.error?.message}`);
     assert.ok(result.data);
-    assert.ok(typeof result.data.slideCount === "number");
-    assert.ok(Array.isArray(result.data.slides));
+    const textData = result.data as { slideCount: number; slides: unknown[] };
+    assert.ok(typeof textData.slideCount === "number");
+    assert.ok(Array.isArray(textData.slides));
   } finally {
     // Clean up
   }
@@ -245,8 +254,9 @@ test("McpServer.executeTool - ViewAsHtml tool returns HTML", async () => {
 
     assert.ok(result.ok, `ViewAsHtml failed: ${result.error?.message}`);
     assert.ok(result.data);
-    assert.ok(typeof result.data.html === "string");
-    assert.ok(result.data.html.includes("<!DOCTYPE html") || result.data.html.includes("<html"));
+    const htmlData = result.data as { html: string };
+    assert.ok(typeof htmlData.html === "string");
+    assert.ok(htmlData.html.includes("<!DOCTYPE html") || htmlData.html.includes("<html"));
   } finally {
     // Clean up
   }
@@ -261,8 +271,9 @@ test("McpServer.executeTool - ViewAsSvg tool returns SVG", async () => {
 
     assert.ok(result.ok, `ViewAsSvg failed: ${result.error?.message}`);
     assert.ok(result.data);
-    assert.ok(typeof result.data.svg === "string");
-    assert.ok(result.data.svg.includes("<svg"));
+    const svgData = result.data as { svg: string };
+    assert.ok(typeof svgData.svg === "string");
+    assert.ok(svgData.svg.includes("<svg"));
   } finally {
     // Clean up
   }
@@ -322,7 +333,7 @@ test("McpServer.executeTool - unknown tool returns not_found error", async () =>
   const result = await server["executeTool"]("NonExistentTool", { filePath: tempPath });
 
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "not_found");
+  assert.equal(result.error!.code, "not_found");
 });
 
 // ============================================================================
@@ -437,9 +448,10 @@ test("McpServer.handleRequest - tools/call Add returns success", async () => {
     assert.equal(response.jsonrpc, "2.0");
     assert.equal(response.id, 10);
     assert.ok(response.result);
-    assert.ok(!response.result.isError);
+    const result10 = response.result as McpToolResult;
+    assert.ok(!result10.isError);
 
-    const content = JSON.parse(response.result.content[0].text);
+    const content = JSON.parse(result10.content[0].text);
     assert.ok(content.ok);
     assert.ok(content.data);
   } finally {
@@ -467,9 +479,10 @@ test("McpServer.handleRequest - tools/call ViewAsText returns success", async ()
     assert.equal(response.jsonrpc, "2.0");
     assert.equal(response.id, 11);
     assert.ok(response.result);
-    assert.ok(!response.result.isError);
+    const result11 = response.result as McpToolResult;
+    assert.ok(!result11.isError);
 
-    const content = JSON.parse(response.result.content[0].text);
+    const content = JSON.parse(result11.content[0].text);
     assert.ok(content.ok);
     assert.ok(content.data.slideCount);
     assert.ok(Array.isArray(content.data.slides));
@@ -496,9 +509,10 @@ test("McpServer.handleRequest - tools/call with invalid filePath returns error",
   assert.equal(response.jsonrpc, "2.0");
   assert.equal(response.id, 12);
   assert.ok(response.result);
-  assert.ok(response.result.isError);
+  const result12 = response.result as McpToolResult;
+  assert.ok(result12.isError);
 
-  const content = JSON.parse(response.result.content[0].text);
+  const content = JSON.parse(result12.content[0].text);
   assert.ok(!content.ok);
   assert.ok(content.error);
 });

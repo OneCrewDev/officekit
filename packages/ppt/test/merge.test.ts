@@ -4,9 +4,9 @@ import { copyFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
-import { merge } from "../src/merge.ts";
-import { setShapeText } from "../src/shapes.ts";
-import { getTextRuns } from "../src/text.ts";
+import { merge } from "../src/merge.js";
+import { setShapeText } from "../src/shapes.js";
+import { getTextRuns } from "../src/text.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -21,7 +21,7 @@ async function getShapeTextContent(filePath: string, shapePath: string): Promise
   if (!result.ok) {
     throw new Error(result.error?.message);
   }
-  return result.data.paragraphs?.map(p => p.text).join("") ?? result.data.runs.map(r => r.text).join("");
+  return result.data!.paragraphs?.map(p => p.text).join("") ?? result.data!.runs.map(r => r.text).join("");
 }
 
 test("merge - replaces simple {{key}} placeholders", async () => {

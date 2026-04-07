@@ -10,7 +10,7 @@ import {
   removeSlide,
   moveSlide,
   duplicateSlide,
-} from "../src/slides.ts";
+} from "../src/slides.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -38,16 +38,16 @@ test("addSlide - adds a new slide to presentation", async () => {
   try {
     const beforeResult = await getSlides(tempPath);
     assert.ok(beforeResult.ok);
-    const beforeCount = beforeResult.data.total;
+    const beforeCount = beforeResult.data!.total;
 
     const addResult = await addSlide(tempPath);
     assert.ok(addResult.ok, `addSlide failed: ${addResult.error?.message}`);
-    assert.ok(addResult.data);
-    assert.ok(addResult.data.path);
+    assert.ok(addResult.data!);
+    assert.ok(addResult.data!.path);
 
     const afterResult = await getSlides(tempPath);
     assert.ok(afterResult.ok);
-    assert.equal(afterResult.data.total, beforeCount + 1);
+    assert.equal(afterResult.data!.total, beforeCount + 1);
   } finally {
     // Clean up
   }
@@ -72,14 +72,14 @@ test("removeSlide - removes a slide from presentation", async () => {
 
     const beforeResult = await getSlides(tempPath);
     assert.ok(beforeResult.ok);
-    const beforeCount = beforeResult.data.total;
+    const beforeCount = beforeResult.data!.total;
 
     const removeResult = await removeSlide(tempPath, 1);
     assert.ok(removeResult.ok, `removeSlide failed: ${removeResult.error?.message}`);
 
     const afterResult = await getSlides(tempPath);
     assert.ok(afterResult.ok);
-    assert.equal(afterResult.data.total, beforeCount - 1);
+    assert.equal(afterResult.data!.total, beforeCount - 1);
   } finally {
     // Clean up
   }
@@ -106,7 +106,7 @@ test("moveSlide - moves slide from one position to another", async () => {
 
     const beforeResult = await getSlides(tempPath);
     assert.ok(beforeResult.ok);
-    const slidesBefore = beforeResult.data.slides;
+    const slidesBefore = beforeResult.data!.slides;
 
     // Move slide from position 1 to position 3
     const moveResult = await moveSlide(tempPath, 1, 3);
@@ -144,16 +144,16 @@ test("duplicateSlide - duplicates an existing slide", async () => {
   try {
     const beforeResult = await getSlides(tempPath);
     assert.ok(beforeResult.ok);
-    const beforeCount = beforeResult.data.total;
+    const beforeCount = beforeResult.data!.total;
 
     const dupResult = await duplicateSlide(tempPath, 1);
     assert.ok(dupResult.ok, `duplicateSlide failed: ${dupResult.error?.message}`);
-    assert.ok(dupResult.data);
-    assert.ok(dupResult.data.path);
+    assert.ok(dupResult.data!);
+    assert.ok(dupResult.data!.path);
 
     const afterResult = await getSlides(tempPath);
     assert.ok(afterResult.ok);
-    assert.equal(afterResult.data.total, beforeCount + 1);
+    assert.equal(afterResult.data!.total, beforeCount + 1);
   } finally {
     // Clean up
   }

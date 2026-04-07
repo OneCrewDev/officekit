@@ -9,8 +9,8 @@ import {
   setShapeProperty,
   removeShape,
   setSlideProperty,
-} from "../src/shapes.ts";
-import { addSlide, getSlides } from "../src/slides.ts";
+} from "../src/shapes.js";
+import { addSlide, getSlides } from "../src/slides.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 

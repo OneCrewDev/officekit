@@ -26,7 +26,7 @@ import { parsePath, buildPath, getSlideIndex } from "./path.js";
  */
 export interface BatchOperation {
   /** Operation type */
-  op: "set" | "remove" | "swap" | "copyFrom" | "rawSet";
+  op: "set" | "remove" | "swap" | "copyFrom" | "rawSet" | "setShapeText";
   /** Operation parameters */
   params: Record<string, unknown>;
 }
@@ -163,40 +163,39 @@ function escapeXml(text: string): string {
 /**
  * Resolves a slide path or index to a 1-based slide index.
  */
-function resolveSlideIndex(filePath: string, slideRef: number | string): Promise<Result<number>> {
-  return andThen(readFile(filePath, null), async (buffer) => {
-    try {
-      const zip = readStoredZip(buffer);
-      const presentationXml = requireEntry(zip, "ppt/presentation.xml");
-      const relsXml = requireEntry(zip, "ppt/_rels/presentation.xml.rels");
-      const relationships = parseRelationshipEntries(relsXml);
-      const slideIds = getSlideIds(presentationXml);
+async function resolveSlideIndex(filePath: string, slideRef: number | string): Promise<Result<number>> {
+  try {
+    const buffer = await readFile(filePath);
+    const zip = readStoredZip(buffer);
+    const presentationXml = requireEntry(zip, "ppt/presentation.xml");
+    const relsXml = requireEntry(zip, "ppt/_rels/presentation.xml.rels");
+    const relationships = parseRelationshipEntries(relsXml);
+    const slideIds = getSlideIds(presentationXml);
 
-      if (typeof slideRef === "number") {
-        if (slideRef < 1 || slideRef > slideIds.length) {
-          return invalidInput(`Slide index ${slideRef} is out of range (1-${slideIds.length})`);
-        }
-        return ok(slideRef);
+    if (typeof slideRef === "number") {
+      if (slideRef < 1 || slideRef > slideIds.length) {
+        return invalidInput(`Slide index ${slideRef} is out of range (1-${slideIds.length})`);
       }
-
-      // slideRef is a path like "/slide[1]"
-      const slideIndexMatch = slideRef.match(/^\/slide\[(\d+)\]/i);
-      if (slideIndexMatch) {
-        const index = parseInt(slideIndexMatch[1], 10);
-        if (index < 1 || index > slideIds.length) {
-          return invalidInput(`Slide index ${index} is out of range (1-${slideIds.length})`);
-        }
-        return ok(index);
-      }
-
-      return invalidInput(`Invalid slide reference: ${slideRef}`);
-    } catch (e) {
-      if (e instanceof Error) {
-        return err("operation_failed", e.message);
-      }
-      return err("operation_failed", String(e));
+      return ok(slideRef);
     }
-  });
+
+    // slideRef is a path like "/slide[1]"
+    const slideIndexMatch = slideRef.match(/^\/slide\[(\d+)\]/i);
+    if (slideIndexMatch) {
+      const index = parseInt(slideIndexMatch[1], 10);
+      if (index < 1 || index > slideIds.length) {
+        return invalidInput(`Slide index ${index} is out of range (1-${slideIds.length})`);
+      }
+      return ok(index);
+    }
+
+    return invalidInput(`Invalid slide reference: ${slideRef}`);
+  } catch (e) {
+    if (e instanceof Error) {
+      return err("operation_failed", e.message);
+    }
+    return err("operation_failed", String(e));
+  }
 }
 
 /**
@@ -237,7 +236,7 @@ export async function rawSet(filePath: string, pptPath: string, xml: string): Pr
   try {
     const parsed = parsePath(pptPath);
     if (!parsed.ok) {
-      return parsed;
+      return err(parsed.error?.code ?? "invalid_path", parsed.error?.message ?? "Failed to parse path");
     }
 
     const slideIndex = getSlideIndex(pptPath);
@@ -250,10 +249,13 @@ export async function rawSet(filePath: string, pptPath: string, xml: string): Pr
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const updatedSlideXml = rawSetElementInSlide(slideXml, pptPath, xml);
 
@@ -349,7 +351,7 @@ export async function rawGet(filePath: string, pptPath: string): Promise<Result<
   try {
     const parsed = parsePath(pptPath);
     if (!parsed.ok) {
-      return parsed;
+      return err(parsed.error?.code ?? "invalid_path", parsed.error?.message ?? "Failed to parse path");
     }
 
     const slideIndex = getSlideIndex(pptPath);
@@ -362,10 +364,13 @@ export async function rawGet(filePath: string, pptPath: string): Promise<Result<
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Extract element XML
@@ -520,10 +525,13 @@ export async function swapShapes(filePath: string, path1: string, path2: string)
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex1);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
 
     // Extract shape indices
@@ -628,19 +636,25 @@ export async function copyShape(
     // Get source slide
     const sourceSlidePathResult = getSlideEntryPath(zip, sourceSlideIndex);
     if (!sourceSlidePathResult.ok) {
-      return sourceSlidePathResult;
+      return err(sourceSlidePathResult.error?.code ?? "slide_not_found", sourceSlidePathResult.error?.message ?? "Failed to get source slide path");
     }
 
     const sourceSlideEntry = sourceSlidePathResult.data;
+    if (!sourceSlideEntry) {
+      return err("slide_not_found", "Source slide entry not found");
+    }
     const sourceSlideXml = requireEntry(zip, sourceSlideEntry);
 
     // Get target slide
     const targetSlidePathResult = getSlideEntryPath(zip, targetSlideIndex);
     if (!targetSlidePathResult.ok) {
-      return targetSlidePathResult;
+      return err(targetSlidePathResult.error?.code ?? "slide_not_found", targetSlidePathResult.error?.message ?? "Failed to get target slide path");
     }
 
     const targetSlideEntry = targetSlidePathResult.data;
+    if (!targetSlideEntry) {
+      return err("slide_not_found", "Target slide entry not found");
+    }
     const targetSlideXml = requireEntry(zip, targetSlideEntry);
 
     // Extract source shape XML
@@ -911,12 +925,17 @@ export async function batch(filePath: string, operations: BatchOperation[]): Pro
 
           const slidePathResult = getSlideEntryPathFromZip(zip, slideIndex);
           if (!slidePathResult.ok) {
-            return slidePathResult;
+            return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
           }
 
-          let slideXml = modifiedEntries.get(slidePathResult.data) || requireEntry(zip, slidePathResult.data);
+          const slideEntry = slidePathResult.data;
+          if (!slideEntry) {
+            return err("slide_not_found", "Slide entry not found");
+          }
+
+          let slideXml = modifiedEntries.get(slideEntry) || requireEntry(zip, slideEntry);
           slideXml = rawSetElementInSlide(slideXml, path, xml);
-          modifiedEntries.set(slidePathResult.data, slideXml);
+          modifiedEntries.set(slideEntry, slideXml);
           break;
         }
 

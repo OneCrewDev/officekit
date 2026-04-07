@@ -193,8 +193,8 @@ test("watch - multiple clients can connect", async () => {
     assert.ok(json.clients >= 2, `Expected at least 2 clients, got ${json.clients}`);
 
     // Close the fetch connections
-    client1.body.cancel();
-    client2.body.cancel();
+    client1.body!.cancel();
+    client2.body!.cancel();
 
     await result.data!.close();
   } finally {

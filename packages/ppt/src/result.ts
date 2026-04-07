@@ -193,7 +193,7 @@ export function map<T, U>(result: Result<T>, fn: (data: T) => U): Result<U> {
  * // Returns: { ok: false, error: { code: "new_old_code", message: "Something failed" } }
  */
 export function mapErr<T>(result: Result<T>, fn: (error: ResultError) => ResultError): Result<T> {
-  if (isOk(result)) {
+  if (!isErr(result)) {
     return result;
   }
   return { ok: false, error: fn(result.error) };

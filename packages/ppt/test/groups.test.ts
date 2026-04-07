@@ -11,8 +11,8 @@ import {
   addShapeToGroup,
   removeShapeFromGroup,
   getGroup,
-} from "../src/groups.ts";
-import { addShape } from "../src/shapes.ts";
+} from "../src/groups.js";
+import { addShape } from "../src/shapes.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 

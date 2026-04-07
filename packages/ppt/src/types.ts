@@ -95,6 +95,8 @@ export interface SlideModel {
   layout?: string;
   /** Layout type (e.g., "title", "body", "twoColumnText") */
   layoutType?: string;
+  /** Theme name used by this slide */
+  themeName?: string;
   /** Background settings */
   background?: SlideBackground;
   /** Transition animation */
@@ -134,7 +136,7 @@ export interface SlideBackground {
  */
 export interface GradientFill {
   type: "linear" | "radial";
-  colors: string[];
+  colors: Array<{ color: string; position: number }>;
   /** Angle in degrees for linear gradient */
   angle?: number;
 }

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { Result } from "../src/types.js";
 
 import {
   ok,
@@ -24,7 +25,7 @@ import {
   alreadyExists,
   invalidInput,
   notSupported,
-} from "../src/result.ts";
+} from "../src/result.js";
 
 test("ok - creates successful result", () => {
   const result = ok({ key: "value" });
@@ -43,37 +44,37 @@ test("err - creates error result", () => {
   const result = err("not_found", "Slide not found");
   assert.ok(!result.ok);
   assert.ok(result.error);
-  assert.equal(result.error.code, "not_found");
-  assert.equal(result.error.message, "Slide not found");
+  assert.equal(result.error!.code, "not_found");
+  assert.equal(result.error!.message, "Slide not found");
 });
 
 test("err - creates error with suggestion", () => {
   const result = err("not_found", "Slide not found", "Check the slide index");
   assert.ok(!result.ok);
-  assert.equal(result.error.suggestion, "Check the slide index");
+  assert.equal(result.error!.suggestion, "Check the slide index");
 });
 
 test("fail - creates error from Error object", () => {
   const error = new Error("Something went wrong");
   const result = fail(error);
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "unknown_error");
-  assert.equal(result.error.message, "Something went wrong");
+  assert.equal(result.error!.code, "unknown_error");
+  assert.equal(result.error!.message, "Something went wrong");
 });
 
 test("fail - creates error with custom code", () => {
   const error = new Error("Custom error");
   const result = fail(error, "custom_code");
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "custom_code");
+  assert.equal(result.error!.code, "custom_code");
 });
 
 test("failWith - creates error with full details", () => {
   const result = failWith("validation_error", "Invalid input", "Provide a valid number");
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "validation_error");
-  assert.equal(result.error.message, "Invalid input");
-  assert.equal(result.error.suggestion, "Provide a valid number");
+  assert.equal(result.error!.code, "validation_error");
+  assert.equal(result.error!.message, "Invalid input");
+  assert.equal(result.error!.suggestion, "Provide a valid number");
 });
 
 test("isOk - type guard for successful results", () => {
@@ -103,7 +104,7 @@ test("someIf - converts nullable to result", () => {
 
   const nullResult = someIf(nullValue, "not_found", "Value not found");
   assert.ok(!nullResult.ok);
-  assert.equal(nullResult.error.code, "not_found");
+  assert.equal(nullResult.error!.code, "not_found");
 
   const undefinedResult = someIf(undefinedValue, "not_found", "Value not found");
   assert.ok(!undefinedResult.ok);
@@ -119,7 +120,7 @@ test("fromPromise - wraps async function", async () => {
 
   const failResult = await fromPromise(failPromise);
   assert.ok(!failResult.ok);
-  assert.equal(failResult.error.message, "Async error");
+  assert.equal(failResult.error!.message, "Async error");
 });
 
 test("fromFn - wraps sync function", () => {
@@ -134,7 +135,7 @@ test("fromFn - wraps sync function", () => {
 
   const failResult = fromFn(failFn);
   assert.ok(!failResult.ok);
-  assert.equal(failResult.error.message, "Sync error");
+  assert.equal(failResult.error!.message, "Sync error");
 });
 
 test("map - transforms successful result data", () => {
@@ -147,10 +148,10 @@ test("map - transforms successful result data", () => {
 
 test("map - passes through error", () => {
   const result = err("code", "message");
-  const mapped = map(result, (d) => ({ ...d, doubled: d }));
+  const mapped = map(result, (d) => ({ ...(d as object), doubled: d }));
 
   assert.ok(!mapped.ok);
-  assert.equal(mapped.error.code, "code");
+  assert.equal(mapped.error!.code, "code");
 });
 
 test("mapErr - transforms error", () => {
@@ -161,8 +162,8 @@ test("mapErr - transforms error", () => {
   }));
 
   assert.ok(!mapped.ok);
-  assert.equal(mapped.error.code, "new_old_code");
-  assert.equal(mapped.error.message, "Something failed");
+  assert.equal(mapped.error!.code, "new_old_code");
+  assert.equal(mapped.error!.message, "Something failed");
 });
 
 test("mapErr - passes through success", () => {
@@ -183,12 +184,12 @@ test("andThen - chains result-returning functions", () => {
 
   const failChain = andThen(err("initial", "Initial error"), chainFn);
   assert.ok(!failChain.ok);
-  assert.equal(failChain.error.code, "initial");
+  assert.equal(failChain.error!.code, "initial");
 });
 
 test("getOrElse - returns fallback on error", () => {
-  const errorResult = err("code", "message");
-  const fallback = { default: true };
+  const errorResult: Result<{ found: boolean }> = err("code", "message");
+  const fallback = { found: false };
 
   assert.deepEqual(getOrElse(errorResult, fallback), fallback);
   assert.deepEqual(getOrElse(ok({ found: true }), fallback), { found: true });
@@ -229,36 +230,36 @@ test("ErrorCodes - contains standard error codes", () => {
 test("invalidPath - creates INVALID_PATH error", () => {
   const result = invalidPath("Path must be absolute", "Start with /");
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "invalid_path");
-  assert.equal(result.error.message, "Path must be absolute");
-  assert.equal(result.error.suggestion, "Start with /");
+  assert.equal(result.error!.code, "invalid_path");
+  assert.equal(result.error!.message, "Path must be absolute");
+  assert.equal(result.error!.suggestion, "Start with /");
 });
 
 test("notFound - creates NOT_FOUND error", () => {
   const result = notFound("Slide", "5", "Check slide count");
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "not_found");
-  assert.equal(result.error.message, "Slide 5 not found");
-  assert.equal(result.error.suggestion, "Check slide count");
+  assert.equal(result.error!.code, "not_found");
+  assert.equal(result.error!.message, "Slide 5 not found");
+  assert.equal(result.error!.suggestion, "Check slide count");
 });
 
 test("alreadyExists - creates ALREADY_EXISTS error", () => {
   const result = alreadyExists("Slide", "3", "Use --force to replace");
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "already_exists");
-  assert.equal(result.error.message, "Slide 3 already exists");
+  assert.equal(result.error!.code, "already_exists");
+  assert.equal(result.error!.message, "Slide 3 already exists");
 });
 
 test("invalidInput - creates INVALID_INPUT error", () => {
   const result = invalidInput("Index must be positive", "Use index >= 1");
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "invalid_input");
-  assert.equal(result.error.message, "Index must be positive");
+  assert.equal(result.error!.code, "invalid_input");
+  assert.equal(result.error!.message, "Index must be positive");
 });
 
 test("notSupported - creates NOT_SUPPORTED error", () => {
   const result = notSupported("This operation is not yet implemented");
   assert.ok(!result.ok);
-  assert.equal(result.error.code, "not_supported");
-  assert.equal(result.error.message, "This operation is not yet implemented");
+  assert.equal(result.error!.code, "not_supported");
+  assert.equal(result.error!.message, "This operation is not yet implemented");
 });

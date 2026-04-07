@@ -148,10 +148,10 @@ export async function getTextRuns(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message);
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -404,10 +404,10 @@ export async function setTextRuns(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message);
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -584,10 +584,10 @@ export async function addTextParagraph(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message);
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -764,10 +764,10 @@ export async function setTextFormat(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error!.code, slidePathResult.error!.message);
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -877,7 +877,7 @@ function updateShapeTextFormat(shapeXml: string, format: TextFormat): string {
     // Rebuild rPr
     if (match.endsWith("/>")) {
       // Self-closing rPr
-      const combinedAttrs = [...newAttrs, ...rPrAttrs.split('"').filter(s => s.trim())].join(" ");
+      const combinedAttrs = [...newAttrs, ...rPrAttrs.split('"').filter((s: string) => s.trim())].join(" ");
       const attrStr = combinedAttrs ? ` ${combinedAttrs}` : "";
       const closeTag = colorFill ? `\n        </a:rPr>` : "";
       return `<a:rPr lang="en-US"${attrStr}${colorFill}${closeTag}`;

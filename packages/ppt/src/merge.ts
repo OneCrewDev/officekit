@@ -253,7 +253,7 @@ function processLoops(text: string, data: Record<string, unknown>): { result: st
       if (typeof item === "object" && item !== null) {
         const itemData = item as Record<string, unknown>;
         // Replace simple {{key}} patterns within the loop
-        itemContent = itemContent.replace(/\{\{([^}]+)\}\}/g, (placeholder, expr) => {
+        itemContent = itemContent.replace(/\{\{([^}]+)\}\}/g, (placeholder: string, expr: string) => {
           // Handle ../ prefix for parent context access
           if (expr.startsWith("../")) {
             const parentKey = expr.slice(3);

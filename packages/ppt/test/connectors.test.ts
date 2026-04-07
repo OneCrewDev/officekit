@@ -10,9 +10,9 @@ import {
   setConnectorEndpoints,
   removeConnector,
   setConnectorStyle,
-} from "../src/connectors.ts";
-import { addSlide } from "../src/slides.ts";
-import { addShape } from "../src/shapes.ts";
+} from "../src/connectors.js";
+import { addSlide } from "../src/slides.js";
+import { addShape } from "../src/shapes.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 

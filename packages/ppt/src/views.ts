@@ -726,15 +726,15 @@ export async function viewAsText(
 ): Promise<Result<ViewTextResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidesInfoResult = getAllSlideEntries(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error!.code, slidesInfoResult.error!.message);
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   // Filter to specific slide if requested
   const targetSlides = slideIndex
@@ -747,7 +747,7 @@ export async function viewAsText(
 
   const slides: SlideText[] = [];
 
-  for (const slideInfo of targetSlides) {
+  for (const slideInfo of targetSlides!) {
     const slideXml = requireEntry(zip, slideInfo.entryPath);
     const { title, shapes: shapeTexts } = extractTextFromSlide(slideXml, slideInfo.index);
 
@@ -782,8 +782,9 @@ export async function viewAsText(
 /**
  * Extracts text from a slide's XML.
  */
-function extractTextFromSlide(slideXml: string, slideIndex: number): { title?: string; shapes: Array<{ path: string; text: string }> } {
+function extractTextFromSlide(slideXml: string, slideIndex: number): { title?: string; titlePath?: string; shapes: Array<{ path: string; text: string }> } {
   let title: string | undefined;
+  let titlePath: string | undefined;
   const shapes: Array<{ path: string; text: string }> = [];
 
   // Parse all shapes
@@ -791,19 +792,25 @@ function extractTextFromSlide(slideXml: string, slideIndex: number): { title?: s
 
   for (const shape of parsedShapes) {
     if (shape.text) {
-      shapes.push({
-        path: shape.path,
-        text: shape.text,
-      });
-
-      // Check if this is a title
+      // Check if this is a title placeholder, otherwise use first shape as fallback title
       if (shape.placeholderType === "title" && !title) {
         title = shape.text;
+        titlePath = shape.path;
+      } else if (!title) {
+        // Fallback: use first shape's text as title
+        title = shape.text;
+        titlePath = shape.path;
+      } else {
+        // Only add to shapes array if not used as title
+        shapes.push({
+          path: shape.path,
+          text: shape.text,
+        });
       }
     }
   }
 
-  return { title, shapes };
+  return { title, titlePath, shapes };
 }
 
 // ============================================================================
@@ -826,15 +833,15 @@ export async function viewAsAnnotated(
 ): Promise<Result<ViewAnnotatedResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidesInfoResult = getAllSlideEntries(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error!.code, slidesInfoResult.error!.message);
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   // Filter to specific slide if requested
   const targetSlides = slideIndex
@@ -847,7 +854,7 @@ export async function viewAsAnnotated(
 
   const slides: SlideAnnotation[] = [];
 
-  for (const slideInfo of targetSlides) {
+  for (const slideInfo of targetSlides!) {
     const slideXml = requireEntry(zip, slideInfo.entryPath);
     const { title } = extractTextFromSlide(slideXml, slideInfo.index);
 
@@ -937,15 +944,15 @@ export async function viewAsOutline(
 ): Promise<Result<ViewOutlineResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidesInfoResult = getAllSlideEntries(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error!.code, slidesInfoResult.error!.message);
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   // Filter to specific slide if requested
   const targetSlides = slideIndex
@@ -958,9 +965,9 @@ export async function viewAsOutline(
 
   const slides: SlideOutline[] = [];
 
-  for (const slideInfo of targetSlides) {
+  for (const slideInfo of targetSlides!) {
     const slideXml = requireEntry(zip, slideInfo.entryPath);
-    const { title, shapes: shapeTexts } = extractTextFromSlide(slideXml, slideInfo.index);
+    const { title, titlePath } = extractTextFromSlide(slideXml, slideInfo.index);
 
     const content: OutlineContent[] = [];
 
@@ -976,11 +983,17 @@ export async function viewAsOutline(
 
     // Parse shapes
     const parsedShapes = parseShapesFromSlideXml(slideXml, slideInfo.index);
+    let shapeIndex = 0;
     for (const shape of parsedShapes) {
       // Skip shapes that are placeholders (already added)
       if (shape.placeholderType) {
         continue;
       }
+      // Skip the title shape (used as slide title)
+      if (titlePath && shape.path === titlePath) {
+        continue;
+      }
+      shapeIndex++;
 
       const children: OutlineContent[] = [];
 
@@ -1001,7 +1014,7 @@ export async function viewAsOutline(
       content.push({
         type: shape.type === "textbox" ? "shape" : (shape.type as OutlineContent["type"]),
         path: shape.path,
-        description: `${shape.type}${shape.name ? ` (${shape.name})` : ""}${shape.text ? `: "${shape.text.slice(0, 30)}${shape.text.length > 30 ? "..." : ""}"` : ""}`,
+        description: `Shape ${shapeIndex}:${shape.name ? ` (${shape.name})` : ""}${shape.text ? ` ${shape.text.slice(0, 30)}${shape.text.length > 30 ? "..." : ""}` : ""}`,
         children: children.length > 0 ? children : undefined,
       });
     }
@@ -1061,15 +1074,15 @@ export async function viewAsStats(
 ): Promise<Result<ViewStatsResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidesInfoResult = getAllSlideEntries(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error!.code, slidesInfoResult.error!.message);
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   // Filter to specific slide if requested
   const targetSlides = slideIndex
@@ -1089,7 +1102,7 @@ export async function viewAsStats(
 
   const slideStats: SlideStats[] = [];
 
-  for (const slideInfo of targetSlides) {
+  for (const slideInfo of targetSlides!) {
     const slideXml = requireEntry(zip, slideInfo.entryPath);
     const { title, shapes: shapeTexts } = extractTextFromSlide(slideXml, slideInfo.index);
 
@@ -1158,10 +1171,10 @@ export async function getSlideStats(
 ): Promise<Result<SlideStats>> {
   const statsResult = await viewAsStats(filePath, slideIndex);
   if (!statsResult.ok) {
-    return statsResult;
+    return err(statsResult.error!.code, statsResult.error!.message);
   }
 
-  const slideStats = statsResult.data.slides[0];
+  const slideStats = statsResult.data!.slides[0];
   if (!slideStats) {
     return invalidInput(`Slide index ${slideIndex} is out of range`);
   }
@@ -1189,15 +1202,15 @@ export async function viewAsIssues(
 ): Promise<Result<ViewIssuesResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidesInfoResult = getAllSlideEntries(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error!.code, slidesInfoResult.error!.message);
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   // Filter to specific slide if requested
   const targetSlides = slideIndex
@@ -1210,7 +1223,7 @@ export async function viewAsIssues(
 
   const issues: Issue[] = [];
 
-  for (const slideInfo of targetSlides) {
+  for (const slideInfo of targetSlides!) {
     const slideXml = requireEntry(zip, slideInfo.entryPath);
 
     // Check for missing title
@@ -1322,16 +1335,16 @@ export async function checkShapeTextOverflow(
 
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error!.code, slidePathResult.error!.message);
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   // Extract shape index

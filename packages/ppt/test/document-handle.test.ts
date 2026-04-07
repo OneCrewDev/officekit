@@ -13,8 +13,8 @@ import {
   getFilePath,
   isDirty,
   setDirty,
-} from "../src/document-handle.ts";
-import { getOpenCount, clearRegistry } from "../src/registry.ts";
+} from "../src/document-handle.js";
+import { getOpenCount, clearRegistry } from "../src/registry.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -62,7 +62,7 @@ test("close - closes an open document without saving", async () => {
     const openResult = await open(tempPath);
     assert.ok(openResult.ok);
 
-    const handle = openResult.data.handle;
+    const handle = openResult.data!.handle;
     assert.ok(isOpen(handle));
 
     const closeResult = await close(handle);
@@ -81,7 +81,7 @@ test("close - closes and saves an open document", async () => {
     const openResult = await open(tempPath);
     assert.ok(openResult.ok);
 
-    const handle = openResult.data.handle;
+    const handle = openResult.data!.handle;
     assert.ok(isOpen(handle));
 
     // Mark as dirty
@@ -110,8 +110,8 @@ test("isOpen - returns true for open document", async () => {
   try {
     const result = await open(tempPath);
     assert.ok(result.ok);
-    assert.ok(isOpen(result.data.handle));
-    await close(result.data.handle);
+    assert.ok(isOpen(result.data!.handle));
+    await close(result.data!.handle);
   } finally {
     try {
       await unlink(tempPath);
@@ -124,7 +124,7 @@ test("isOpen - returns false for closed document", async () => {
   try {
     const result = await open(tempPath);
     assert.ok(result.ok);
-    const handle = result.data.handle;
+    const handle = result.data!.handle;
     await close(handle);
     assert.ok(!isOpen(handle));
   } finally {
@@ -144,14 +144,14 @@ test("getInfo - returns document info", async () => {
     const openResult = await open(tempPath);
     assert.ok(openResult.ok);
 
-    const handle = openResult.data.handle;
+    const handle = openResult.data!.handle;
     const infoResult = getInfo(handle);
 
     assert.ok(infoResult.ok);
-    assert.equal(infoResult.data.handle, handle);
-    assert.equal(infoResult.data.filePath, tempPath);
-    assert.equal(infoResult.data.dirty, false);
-    assert.ok(infoResult.data.openedAt instanceof Date);
+    assert.equal(infoResult.data!.handle, handle);
+    assert.equal(infoResult.data!.filePath, tempPath);
+    assert.equal(infoResult.data!.dirty, false);
+    assert.ok(infoResult.data!.openedAt instanceof Date);
 
     await close(handle);
   } finally {
@@ -173,14 +173,14 @@ test("getZip - returns the zip contents", async () => {
     const openResult = await open(tempPath);
     assert.ok(openResult.ok);
 
-    const handle = openResult.data.handle;
+    const handle = openResult.data!.handle;
     const zipResult = getZip(handle);
 
     assert.ok(zipResult.ok);
-    assert.ok(zipResult.data instanceof Map);
-    assert.ok(zipResult.data.size > 0);
+    assert.ok(zipResult.data! instanceof Map);
+    assert.ok(zipResult.data!.size > 0);
     // ppt/presentation.xml should be present
-    assert.ok(zipResult.data.has("ppt/presentation.xml"));
+    assert.ok(zipResult.data!.has("ppt/presentation.xml"));
 
     await close(handle);
   } finally {
@@ -202,11 +202,11 @@ test("getFilePath - returns the file path", async () => {
     const openResult = await open(tempPath);
     assert.ok(openResult.ok);
 
-    const handle = openResult.data.handle;
+    const handle = openResult.data!.handle;
     const pathResult = getFilePath(handle);
 
     assert.ok(pathResult.ok);
-    assert.equal(pathResult.data, tempPath);
+    assert.equal(pathResult.data!, tempPath);
 
     await close(handle);
   } finally {
@@ -222,7 +222,7 @@ test("isDirty - returns false initially", async () => {
     const openResult = await open(tempPath);
     assert.ok(openResult.ok);
 
-    const handle = openResult.data.handle;
+    const handle = openResult.data!.handle;
     assert.ok(!isDirty(handle));
 
     await close(handle);
@@ -239,7 +239,7 @@ test("setDirty - marks document as dirty", async () => {
     const openResult = await open(tempPath);
     assert.ok(openResult.ok);
 
-    const handle = openResult.data.handle;
+    const handle = openResult.data!.handle;
     assert.ok(!isDirty(handle));
 
     setDirty(handle);
@@ -264,18 +264,18 @@ test("multiple documents can be open simultaneously", async () => {
 
     assert.ok(result1.ok);
     assert.ok(result2.ok);
-    assert.notEqual(result1.data.handle, result2.data.handle);
+    assert.notEqual(result1.data!.handle, result2.data!.handle);
 
     assert.equal(getOpenCount(), 2);
-    assert.ok(isOpen(result1.data.handle));
-    assert.ok(isOpen(result2.data.handle));
+    assert.ok(isOpen(result1.data!.handle));
+    assert.ok(isOpen(result2.data!.handle));
 
-    await close(result1.data.handle);
-    assert.ok(!isOpen(result1.data.handle));
-    assert.ok(isOpen(result2.data.handle));
+    await close(result1.data!.handle);
+    assert.ok(!isOpen(result1.data!.handle));
+    assert.ok(isOpen(result2.data!.handle));
     assert.equal(getOpenCount(), 1);
 
-    await close(result2.data.handle);
+    await close(result2.data!.handle);
     assert.equal(getOpenCount(), 0);
   } finally {
     try {
@@ -301,14 +301,14 @@ test("closing one document does not affect others", async () => {
     assert.ok(result2.ok);
 
     // Close first document
-    await close(result1.data.handle);
+    await close(result1.data!.handle);
 
     // Second document should still be open
-    assert.ok(!isOpen(result1.data.handle));
-    assert.ok(isOpen(result2.data.handle));
+    assert.ok(!isOpen(result1.data!.handle));
+    assert.ok(isOpen(result2.data!.handle));
 
     // Clean up
-    await close(result2.data.handle);
+    await close(result2.data!.handle);
   } finally {
     try {
       await unlink(tempPath1);

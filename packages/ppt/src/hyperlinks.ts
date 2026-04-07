@@ -210,10 +210,13 @@ export async function getHyperlink(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     const relsXml = requireEntry(zip, relsEntry);
@@ -477,10 +480,13 @@ export async function setHyperlink(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     let relsXml = "";
@@ -502,13 +508,23 @@ export async function setHyperlink(
     if (paraIndex !== null && runIndex !== null) {
       // Set hyperlink on specific run
       const result = setHyperlinkOnRun(slideXml, relationships, paraIndex, runIndex, url);
-      if (!result.ok) return result;
+      if (!result.ok) {
+        return err(result.error?.code ?? "operation_failed", result.error?.message ?? "Failed to set hyperlink on run");
+      }
+      if (!result.data) {
+        return err("operation_failed", "No data returned");
+      }
       updatedSlideXml = result.data.slideXml;
       updatedRelsXml = result.data.relsXml;
     } else if (paraIndex !== null) {
       // Set hyperlink on paragraph
       const result = setHyperlinkOnParagraph(slideXml, relationships, paraIndex, url);
-      if (!result.ok) return result;
+      if (!result.ok) {
+        return err(result.error?.code ?? "operation_failed", result.error?.message ?? "Failed to set hyperlink on paragraph");
+      }
+      if (!result.data) {
+        return err("operation_failed", "No data returned");
+      }
       updatedSlideXml = result.data.slideXml;
       updatedRelsXml = result.data.relsXml;
     } else {
@@ -518,7 +534,12 @@ export async function setHyperlink(
         return invalidInput("Invalid shape path - must include shape[index]");
       }
       const result = setHyperlinkOnShape(slideXml, relationships, shapeIndex, url);
-      if (!result.ok) return result;
+      if (!result.ok) {
+        return err(result.error?.code ?? "operation_failed", result.error?.message ?? "Failed to set hyperlink on shape");
+      }
+      if (!result.data) {
+        return err("operation_failed", "No data returned");
+      }
       updatedSlideXml = result.data.slideXml;
       updatedRelsXml = result.data.relsXml;
     }
@@ -789,10 +810,13 @@ export async function removeHyperlink(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     const relsXml = requireEntry(zip, relsEntry);
@@ -978,15 +1002,18 @@ export async function setInternalHyperlink(
     // Check that target slide exists
     const targetPathResult = getSlideEntryPath(zip, targetSlideIndex);
     if (!targetPathResult.ok) {
-      return targetPathResult;
+      return err(targetPathResult.error?.code ?? "slide_not_found", targetPathResult.error?.message ?? "Failed to get target slide path");
     }
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntry = slidePathResult.data;
+    if (!slideEntry) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntry);
     const relsEntry = getRelationshipsEntryName(slideEntry);
     let relsXml = "";
@@ -1019,13 +1046,23 @@ export async function setInternalHyperlink(
     if (paraIndex !== null && runIndex !== null) {
       // Set hyperlink on specific run
       const result = setHyperlinkOnRun(slideXml, relationships, paraIndex, runIndex, `#${internalTarget}`);
-      if (!result.ok) return result;
+      if (!result.ok) {
+        return err(result.error?.code ?? "operation_failed", result.error?.message ?? "Failed to set hyperlink on run");
+      }
+      if (!result.data) {
+        return err("operation_failed", "No data returned");
+      }
       updatedSlideXml = result.data.slideXml;
       currentRelsXml = result.data.relsXml;
     } else if (paraIndex !== null) {
       // Set hyperlink on paragraph
       const result = setHyperlinkOnParagraph(slideXml, relationships, paraIndex, `#${internalTarget}`);
-      if (!result.ok) return result;
+      if (!result.ok) {
+        return err(result.error?.code ?? "operation_failed", result.error?.message ?? "Failed to set hyperlink on paragraph");
+      }
+      if (!result.data) {
+        return err("operation_failed", "No data returned");
+      }
       updatedSlideXml = result.data.slideXml;
       currentRelsXml = result.data.relsXml;
     } else {
@@ -1035,7 +1072,12 @@ export async function setInternalHyperlink(
         return invalidInput("Invalid shape path - must include shape[index]");
       }
       const result = setHyperlinkOnShape(slideXml, relationships, shapeIndex, `#${internalTarget}`);
-      if (!result.ok) return result;
+      if (!result.ok) {
+        return err(result.error?.code ?? "operation_failed", result.error?.message ?? "Failed to set hyperlink on shape");
+      }
+      if (!result.data) {
+        return err("operation_failed", "No data returned");
+      }
       updatedSlideXml = result.data.slideXml;
       currentRelsXml = result.data.relsXml;
     }

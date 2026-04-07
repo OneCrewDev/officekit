@@ -199,7 +199,7 @@ async function navigateToElement(
   segments: PathSegment[],
   depth: number,
   parentPath = "",
-): DocumentNode | null {
+): Promise<DocumentNode | null> {
   if (segments.length === 0) {
     return createDocumentNode("/", "document");
   }
@@ -210,32 +210,117 @@ async function navigateToElement(
 
   switch (first.name) {
     case "body": {
-      if (segments.length === 1) {
-        const paras = getParagraphsInfo(documentXml);
-        const tables = getTablesInfo(documentXml);
-        const children: DocumentNode[] = [];
+      const paras = getParagraphsInfo(documentXml);
+      const tables = getTablesInfo(documentXml);
+      const children: DocumentNode[] = [];
 
-        for (let i = 0; i < paras.length; i++) {
-          children.push(createDocumentNode(
-            `/body/p[${i + 1}]`,
+      for (let i = 0; i < paras.length; i++) {
+        children.push(createDocumentNode(
+          `/body/p[${i + 1}]`,
+          "paragraph",
+          paras[i].text,
+          { style: paras[i].style, paraId: paras[i].paraId }
+        ));
+      }
+      for (let i = 0; i < tables.length; i++) {
+        children.push(createDocumentNode(
+          `/body/tbl[${i + 1}]`,
+          "table",
+          undefined,
+          { rowCount: tables[i].rows, columnCount: tables[i].cols }
+        ));
+      }
+
+      currentNode = createDocumentNode("/body", "body");
+      if (depth > 0) {
+        currentNode.children = children;
+        currentNode.childCount = children.length;
+      }
+
+      // If there are remaining segments (e.g., /body/p[1]), navigate to the child
+      if (segments.length > 1) {
+        const remaining = segments.slice(1);
+        const firstSeg = remaining[0];
+        const childIndex = (firstSeg.index || 1) - 1;
+
+        // For p/paragraph: find paragraph at childIndex
+        if ((firstSeg.name === "p" || firstSeg.name === "paragraph") && childIndex >= 0 && childIndex < paras.length) {
+          const para = paras[childIndex];
+          const paraPath = `/body/p[${childIndex + 1}]`;
+          const paraNode = createDocumentNode(
+            paraPath,
             "paragraph",
-            paras[i].text,
-            { style: paras[i].style, paraId: paras[i].paraId }
-          ));
+            para.text,
+            { style: para.style, paraId: para.paraId }
+          );
+
+          if (depth > 0) {
+            const runs = getRunsFromParagraph(documentXml, childIndex + 1);
+            paraNode.children = runs;
+            paraNode.childCount = runs.length;
+          }
+
+          // If there are more segments (e.g., /body/p[1]/r[1]), continue navigating
+          if (remaining.length > 1) {
+            const remaining2 = remaining.slice(1);
+            if (remaining2.length === 1 && (remaining2[0].name === "r" || remaining2[0].name === "run")) {
+              const runIdx = (remaining2[0].index || 1) - 1;
+              if (runIdx >= 0 && runIdx < paraNode.children!.length) {
+                return paraNode.children![runIdx];
+              }
+            }
+          }
+
+          return paraNode;
         }
-        for (let i = 0; i < tables.length; i++) {
-          children.push(createDocumentNode(
-            `/body/tbl[${i + 1}]`,
+
+        // For tbl/table: find table at childIndex
+        if ((firstSeg.name === "tbl" || firstSeg.name === "table") && childIndex >= 0 && childIndex < tables.length) {
+          const table = tables[childIndex];
+          const tablePath = `/body/tbl[${childIndex + 1}]`;
+          const tableNode = createDocumentNode(
+            tablePath,
             "table",
             undefined,
-            { rowCount: tables[i].rows, columnCount: tables[i].cols }
-          ));
-        }
+            { rowCount: table.rows, columnCount: table.cols }
+          );
 
-        currentNode = createDocumentNode("/body", "body");
-        if (depth > 0) {
-          currentNode.children = children;
-          currentNode.childCount = children.length;
+          if (depth > 0) {
+            const rows: DocumentNode[] = [];
+            for (let i = 0; i < table.rows; i++) {
+              rows.push(createDocumentNode(
+                `/body/tbl[${childIndex + 1}]/tr[${i + 1}]`,
+                "row",
+                undefined,
+                { cellCount: table.cols }
+              ));
+            }
+            tableNode.children = rows;
+            tableNode.childCount = rows.length;
+          }
+
+          // If there are more segments (e.g., /body/tbl[1]/tr[1]/tc[1]), continue
+          if (remaining.length > 1) {
+            const remaining2 = remaining.slice(1);
+            if (remaining2.length === 1 && (remaining2[0].name === "tr" || remaining2[0].name === "row")) {
+              const rowIdx = (remaining2[0].index || 1) - 1;
+              if (rowIdx >= 0 && rowIdx < table.rows) {
+                return tableNode.children![rowIdx];
+              }
+            }
+            if (remaining2.length === 2 &&
+                (remaining2[0].name === "tr" || remaining2[0].name === "row") &&
+                (remaining2[1].name === "tc" || remaining2[1].name === "cell")) {
+              const rowIdx = (remaining2[0].index || 1) - 1;
+              const cellIdx = (remaining2[1].index || 1) - 1;
+              if (rowIdx >= 0 && rowIdx < table.rows && cellIdx >= 0 && cellIdx < table.cols) {
+                const cellPath = `/body/tbl[${childIndex + 1}]/tr[${rowIdx + 1}]/tc[${cellIdx + 1}]`;
+                return createDocumentNode(cellPath, "cell");
+              }
+            }
+          }
+
+          return tableNode;
         }
       }
       break;
@@ -1101,7 +1186,7 @@ function createParagraphXml(properties: Record<string, string> = {}): string {
     const colorTag = color ? `<w:color w:val="${sanitizeHex(color)}"/>` : "";
     const fontTag = font ? `<w:rFonts w:ascii="${escapeXml(font)}" w:hAnsi="${escapeXml(font)}"/>` : "";
     const sizeTag = size ? `<w:sz w:val="${parseInt(size, 10) * 2}"/>` : "";
-    const ulTag = underline ? `<w:u w:val="${underline === true ? "single" : underline}"/>` : "";
+    const ulTag = underline ? `<w:u w:val="${underline === "true" || underline === "1" ? "single" : underline}"/>` : "";
     rPr = `<w:rPr>${fontTag}${boldTag}${italicTag}${colorTag}${ulTag}${sizeTag}</w:rPr>`;
   }
 
@@ -1122,7 +1207,7 @@ function createRunXml(properties: Record<string, string> = {}): string {
     const colorTag = color ? `<w:color w:val="${sanitizeHex(color)}"/>` : "";
     const fontTag = font ? `<w:rFonts w:ascii="${escapeXml(font)}" w:hAnsi="${escapeXml(font)}"/>` : "";
     const sizeTag = size ? `<w:sz w:val="${parseInt(size, 10) * 2}"/>` : "";
-    const ulTag = underline ? `<w:u w:val="${underline === true ? "single" : underline}"/>` : "";
+    const ulTag = underline ? `<w:u w:val="${underline === "true" || underline === "1" ? "single" : underline}"/>` : "";
     const hlTag = highlight ? `<w:highlight w:val="${highlight}"/>` : "";
     rPr = `<w:rPr>${fontTag}${boldTag}${italicTag}${colorTag}${ulTag}${sizeTag}${hlTag}</w:rPr>`;
   }
@@ -1697,7 +1782,7 @@ function processFindAndFormat(
       tags.push("<w:i/>");
     }
     if (props.underline) {
-      const ulVal = props.underline === true || props.underline === "true" ? "single" : props.underline;
+      const ulVal = props.underline === "true" || props.underline === "1" ? "single" : props.underline;
       tags.push(`<w:u w:val="${ulVal}"/>`);
     }
     if (props.strike) {
@@ -2105,6 +2190,7 @@ export async function addWordNode(
         } else {
           zip.file("word/styles.xml", `<w:styles xmlns:w="${W_NS}">${styleXml}</w:styles>`);
         }
+        await zip.remove("officekit/document.json");
         await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
         return ok({ path: `/styles/${props.name || props.id}` });
 
@@ -2112,6 +2198,7 @@ export async function addWordNode(
         const headerIdx = (zip.file(/^word\/header\d+\.xml$/) || []).length + 1;
         const headerContent = createHeaderXml(props);
         zip.file(`word/header${headerIdx}.xml`, headerContent);
+        await zip.remove("officekit/document.json");
         await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
         return ok({ path: `/header[${headerIdx}]` });
 
@@ -2119,6 +2206,7 @@ export async function addWordNode(
         const footerIdx = (zip.file(/^word\/footer\d+\.xml$/) || []).length + 1;
         const footerContent = createFooterXml(props);
         zip.file(`word/footer${footerIdx}.xml`, footerContent);
+        await zip.remove("officekit/document.json");
         await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
         return ok({ path: `/footer[${footerIdx}]` });
 
@@ -2130,7 +2218,10 @@ export async function addWordNode(
       case "watermark":
         const wmHeader = createWatermarkXml(props);
         const headerIdx2 = (zip.file(/^word\/header\d+\.xml$/) || []).length + 1;
-        zip.file(`word/header${headerIdx2}.xml`, createHeaderXml({ ...props, text: undefined }) + `<w:pict>${wmHeader}</w:pict>`);
+        const headerProps: Record<string, string> = { ...props };
+        delete headerProps.text;
+        zip.file(`word/header${headerIdx2}.xml`, createHeaderXml(headerProps) + `<w:pict>${wmHeader}</w:pict>`);
+        await zip.remove("officekit/document.json");
         await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
         return ok({ path: "/watermark" });
 
@@ -2141,7 +2232,7 @@ export async function addWordNode(
     // Insert the XML
     documentXml = insertAtPosition(documentXml, insertXml, effectivePosition);
     zip.file("word/document.xml", documentXml);
-
+    await zip.remove("officekit/document.json");
     await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
     return ok({ path: resultPath });
   } catch (e) {
@@ -2174,7 +2265,7 @@ export async function setWordNode(
     if (props.find) {
       const find = props.find;
       const replace = props.replace || null;
-      const useRegex = props.regex === "true" || props.regex === true;
+      const useRegex = props.regex === "true" || props.regex === "1";
       const { matchCount } = processFindAndFormat(documentXml, find, replace, props, useRegex);
 
       documentXml = matchCount > 0 ? documentXml : documentXml;
@@ -2183,22 +2274,44 @@ export async function setWordNode(
       return ok({ path: targetPath, matchCount });
     }
 
-    // Handle document-level properties
-    if (targetPath === "/" || targetPath === "" || targetPath === "/body") {
-      // Document properties modification would go here
+    // Handle document-level properties (docProps/core.xml)
+    if (targetPath === "/" || targetPath === "") {
+      // Extract document properties from props and delegate to setDocumentProperties
+      const docProps: DocumentProperties = {};
+      if (props.title !== undefined) docProps.title = props.title;
+      if (props.author !== undefined) docProps.author = props.author;
+      if (props.subject !== undefined) docProps.subject = props.subject;
+      if (props.keywords !== undefined) docProps.keywords = props.keywords;
+      if (props.description !== undefined) docProps.description = props.description;
+      if (props.category !== undefined) docProps.category = props.category;
+      if (props.lastModifiedBy !== undefined) docProps.lastModifiedBy = props.lastModifiedBy;
+      if (props.revision !== undefined) docProps.revision = props.revision;
+      if (Object.keys(docProps).length > 0) {
+        return setDocumentProperties(filePath, docProps).then((r) =>
+          r.ok ? ok({ path: targetPath }) : err(r.error?.code ?? "operation_failed", r.error?.message ?? "Failed to set document properties")
+        );
+      }
       await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
       return ok({ path: targetPath });
     }
 
-    // Handle style path
+    // Handle style path (/styles/styleName)
     if (targetPath.startsWith("/styles/")) {
-      const styleId = targetPath.substring(8);
-      let stylesXml = await getXmlEntry(zip, "word/styles.xml");
-      if (stylesXml) {
-        // Update existing style properties would go here
-        zip.file("word/styles.xml", stylesXml);
-      }
-      await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+      const styleName = targetPath.substring(8);
+      const styleProps: WordStyleProperties = {};
+      if (props.font !== undefined) styleProps.font = props.font;
+      if (props.fontSize !== undefined) styleProps.fontSize = props.fontSize;
+      if (props.bold !== undefined) styleProps.bold = props.bold === "true" || props.bold === "1";
+      if (props.italic !== undefined) styleProps.italic = props.italic === "true" || props.italic === "1";
+      if (props.color !== undefined) styleProps.color = props.color;
+      if (props.underline !== undefined) styleProps.underline = props.underline;
+      if (props.alignment !== undefined) styleProps.alignment = props.alignment as "left" | "center" | "right" | "justify";
+      if (props.spaceBefore !== undefined) styleProps.spaceBefore = props.spaceBefore;
+      if (props.spaceAfter !== undefined) styleProps.spaceAfter = props.spaceAfter;
+      if (props.lineSpacing !== undefined) styleProps.lineSpacing = props.lineSpacing;
+      if (props.basedOn !== undefined) styleProps.basedOn = props.basedOn;
+      if (props.next !== undefined) styleProps.next = props.next;
+      const result = await setWordStyle(filePath, styleName, styleProps);
       return ok({ path: targetPath });
     }
 
@@ -2284,13 +2397,73 @@ export async function moveWordNode(
   options: { after?: string; before?: string; position?: string | number } = {}
 ): Promise<Result<{ path: string }>> {
   try {
-    // Full move implementation would:
-    // 1. Navigate to source element
-    // 2. Clone it
-    // 3. Remove from original position
-    // 4. Insert at target position
+    const zip = await readDocxZip(filePath);
+    let documentXml = await getXmlEntry(zip, "word/document.xml");
 
-    return err("not_implemented", "Move operation not yet fully implemented");
+    if (!documentXml) {
+      return err("not_found", "Document.xml not found in docx archive");
+    }
+
+    // Extract source element XML
+    const sourceXml = extractElementXml(documentXml, sourcePath);
+    if (!sourceXml) {
+      return err("not_found", `Source element not found: ${sourcePath}`);
+    }
+
+    // Get source element type for removal
+    const sourceInfo = parsePath(sourcePath);
+    if (!sourceInfo.ok || !sourceInfo.data) {
+      return err("invalid_path", `Invalid source path: ${sourcePath}`);
+    }
+
+    // Determine insert position
+    let insertPosition: string | number | undefined = options.position;
+    if (options.after) {
+      insertPosition = `find:${options.after}`;
+    } else if (options.before) {
+      insertPosition = `find:${options.before}`;
+    }
+
+    // Clone the source element with new IDs
+    const clonedXml = generateNewParaIds(sourceXml);
+
+    // Insert at target position
+    const originalDocXml = documentXml;
+    documentXml = insertAtPosition(documentXml, clonedXml, insertPosition);
+
+    if (documentXml === originalDocXml && insertPosition !== undefined) {
+      return err("operation_failed", "Failed to insert element at target position");
+    }
+
+    // Remove source element from original position
+    const elementType = sourceInfo.data.segments[0]?.name;
+    if (elementType === "p" || elementType === "paragraph") {
+      // Remove the specific paragraph
+      const paras = documentXml.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi);
+      if (paras) {
+        const srcIdx = sourceInfo.data.segments[0]?.index ?? 1;
+        if (paras[srcIdx - 1]) {
+          documentXml = documentXml.replace(paras[srcIdx - 1], "");
+        }
+      }
+    } else if (elementType === "tbl" || elementType === "table") {
+      // Remove the specific table
+      const tables = documentXml.match(/<w:tbl\b[^>]*>[\s\S]*?<\/w:tbl>/gi);
+      if (tables) {
+        const srcIdx = sourceInfo.data.segments[0]?.index ?? 1;
+        if (tables[srcIdx - 1]) {
+          documentXml = documentXml.replace(tables[srcIdx - 1], "");
+        }
+      }
+    }
+
+    zip.file("word/document.xml", documentXml);
+    await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    // Calculate the new path
+    const newPath = calculateInsertedPath(documentXml, clonedXml, "/body", elementType ?? "paragraph");
+
+    return ok({ path: newPath });
   } catch (e) {
     if (e instanceof Error) {
       return err("operation_failed", e.message);
@@ -2308,12 +2481,45 @@ export async function swapWordNodes(
   path2: string
 ): Promise<Result<{ path1: string; path2: string }>> {
   try {
-    // Full swap implementation would:
-    // 1. Navigate to element 1
-    // 2. Navigate to element 2
-    // 3. Swap their content/positions
+    const zip = await readDocxZip(filePath);
+    let documentXml = await getXmlEntry(zip, "word/document.xml");
 
-    return err("not_implemented", "Swap operation not yet fully implemented");
+    if (!documentXml) {
+      return err("not_found", "Document.xml not found in docx archive");
+    }
+
+    // Extract both elements
+    const xml1 = extractElementXml(documentXml, path1);
+    const xml2 = extractElementXml(documentXml, path2);
+
+    if (!xml1) {
+      return err("not_found", `First element not found: ${path1}`);
+    }
+    if (!xml2) {
+      return err("not_found", `Second element not found: ${path2}`);
+    }
+
+    // Get element types
+    const info1 = parsePath(path1);
+    const info2 = parsePath(path2);
+
+    if (!info1.ok || !info1.data || !info2.ok || !info2.data) {
+      return err("invalid_path", "Invalid path format");
+    }
+
+    // Generate new IDs for swapped elements
+    const swapped1Xml = generateNewParaIds(xml2);
+    const swapped2Xml = generateNewParaIds(xml1);
+
+    // Replace element1 with element2 (with new IDs)
+    documentXml = documentXml.replace(xml1, swapped1Xml);
+    // Replace element2 with element1 (with new IDs)
+    documentXml = documentXml.replace(xml2, swapped2Xml);
+
+    zip.file("word/document.xml", documentXml);
+    await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    return ok({ path1: path2, path2: path1 });
   } catch (e) {
     if (e instanceof Error) {
       return err("operation_failed", e.message);
@@ -2695,26 +2901,27 @@ async function renderFormsView(zip: JSZip, xml: string): Promise<string> {
 
   for (let i = 0; i < sdts.length; i++) {
     const sdt = sdts[i];
-    const nameStr = sdt.tag ? ` name="${sdt.tag}"` : "";
-    lines.push(`  #${i + 1} [sdt] type=${sdt.type || "richtext"}${nameStr} value="${sdt.text}"`);
+    lines.push(`  #${i + 1} [sdt] path="${sdt.path}" text="${sdt.text}"`);
   }
 
   return lines.join("\n");
 }
 
 function renderJsonView(xml: string, stylesXml: string): string {
-  const result: Record<string, unknown> = {
-    paragraphs: [],
-    styles: parseStylesForJson(stylesXml),
-  };
+  const paragraphs: { text: string; style: string }[] = [];
 
   const paras = getParagraphsInfo(xml);
   for (const para of paras) {
-    result.paragraphs.push({
+    paragraphs.push({
       text: para.text,
       style: para.style || "Normal",
     });
   }
+
+  const result = {
+    paragraphs,
+    styles: parseStylesForJson(stylesXml),
+  };
 
   return JSON.stringify(result, null, 2);
 }
@@ -3988,15 +4195,6 @@ function updateCoreProperty(xml: string, tagName: string, value: string): string
   }
   // Add before closing tag
   return xml.replace("</cp:coreProperties>", `<${tagName}>${escapeXml(value)}</${tagName}></cp:coreProperties>`);
-}
-
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 }
 
 // ============================================================================

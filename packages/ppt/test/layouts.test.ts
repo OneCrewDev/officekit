@@ -8,7 +8,7 @@ import {
   getSlideLayout,
   setSlideLayout,
   getLayouts,
-} from "../src/layouts.ts";
+} from "../src/layouts.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -36,7 +36,7 @@ test("getLayouts - layout entries have required properties", async () => {
   try {
     const result = await getLayouts(tempPath);
     assert.ok(result.ok);
-    for (const layout of result.data.layouts) {
+    for (const layout of result.data!.layouts) {
       assert.ok(typeof layout.index === "number");
       assert.ok(typeof layout.name === "string");
     }
@@ -74,7 +74,7 @@ test("setSlideLayout - changes slide layout", async () => {
     // First get available layouts
     const layoutsResult = await getLayouts(tempPath);
     assert.ok(layoutsResult.ok);
-    if (layoutsResult.data.layouts.length < 2) {
+    if (layoutsResult.data!.layouts.length < 2) {
       // Skip test if only one layout available
       return;
     }
@@ -86,7 +86,7 @@ test("setSlideLayout - changes slide layout", async () => {
     // Verify the change
     const getResult = await getSlideLayout(tempPath, 1);
     assert.ok(getResult.ok);
-    assert.equal(getResult.data.layoutIndex, 2);
+    assert.equal(getResult.data!.layoutIndex, 2);
   } finally {
     // Clean up
   }

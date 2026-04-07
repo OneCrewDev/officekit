@@ -213,7 +213,7 @@ function getThemeColors(zip: Map<string, Buffer>): Map<string, string> {
       if (colorSchemeMatch) {
         const schemeContent = colorSchemeMatch[2];
 
-        const colorPatterns: [string, string][] = [
+        const colorPatterns: [string, RegExp][] = [
           ["dk1", /<a:dk1>[\s\S]*?<a:srgbClr[^>]*val="([^"]*)"[^>]*>[\s\S]*?<\/a:dk1>/],
           ["dk2", /<a:dk2>[\s\S]*?<a:srgbClr[^>]*val="([^"]*)"[^>]*>[\s\S]*?<\/a:dk2>/],
           ["lt1", /<a:lt1>[\s\S]*?<a:srgbClr[^>]*val="([^"]*)"[^>]*>[\s\S]*?<\/a:lt1>/],
@@ -664,15 +664,27 @@ export async function viewAsSvg(
 ): Promise<Result<ViewSvgResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    if (zipResult.error) {
+      return err(zipResult.error.code, zipResult.error.message, zipResult.error.suggestion);
+    }
+    return err("operation_failed", "Failed to load presentation");
   }
   const zip = zipResult.data;
+  if (!zip) {
+    return err("operation_failed", "Failed to load presentation");
+  }
 
   const slidesInfoResult = getAllSlideEntries(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    if (slidesInfoResult.error) {
+      return err(slidesInfoResult.error.code, slidesInfoResult.error.message, slidesInfoResult.error.suggestion);
+    }
+    return err("operation_failed", "Failed to get slide entries");
   }
   const slidesInfo = slidesInfoResult.data;
+  if (!slidesInfo) {
+    return err("operation_failed", "Failed to get slide entries");
+  }
 
   // Filter to specific slide if requested
   const targetSlides = slideIndex
@@ -697,7 +709,7 @@ export async function viewAsSvg(
   }
 
   // If single slide, return just that SVG
-  if (targetSlides.length === 1) {
+  if (targetSlides.length === 1 && slideSvgParts[0]) {
     return ok({
       slideCount: 1,
       svg: slideSvgParts[0],

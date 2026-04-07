@@ -8,7 +8,7 @@ import {
   getNotes,
   setNotes,
   removeNotes,
-} from "../src/notes.ts";
+} from "../src/notes.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -51,7 +51,7 @@ test("setNotes - sets notes text on a slide", async () => {
 
     const getResult = await getNotes(tempPath, 1);
     assert.ok(getResult.ok);
-    assert.ok(getResult.data.text.includes("test notes"));
+    assert.ok(getResult.data!.text.includes("test notes"));
   } finally {
     // Clean up
   }
@@ -66,9 +66,9 @@ test("setNotes - supports multiline notes", async () => {
 
     const getResult = await getNotes(tempPath, 1);
     assert.ok(getResult.ok);
-    assert.ok(getResult.data.text.includes("Line 1"));
-    assert.ok(getResult.data.text.includes("Line 2"));
-    assert.ok(getResult.data.text.includes("Line 3"));
+    assert.ok(getResult.data!.text.includes("Line 1"));
+    assert.ok(getResult.data!.text.includes("Line 2"));
+    assert.ok(getResult.data!.text.includes("Line 3"));
   } finally {
     // Clean up
   }
@@ -94,7 +94,7 @@ test("removeNotes - removes notes from a slide", async () => {
     // Verify notes exist
     const beforeResult = await getNotes(tempPath, 1);
     assert.ok(beforeResult.ok);
-    assert.ok(beforeResult.data.text.length > 0);
+    assert.ok(beforeResult.data!.text.length > 0);
 
     // Remove notes
     const removeResult = await removeNotes(tempPath, 1);
@@ -103,7 +103,7 @@ test("removeNotes - removes notes from a slide", async () => {
     // Verify notes are removed
     const afterResult = await getNotes(tempPath, 1);
     assert.ok(afterResult.ok);
-    assert.equal(afterResult.data.text, "");
+    assert.equal(afterResult.data!.text, "");
   } finally {
     // Clean up
   }

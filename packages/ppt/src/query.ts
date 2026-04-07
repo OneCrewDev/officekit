@@ -70,6 +70,24 @@ function normalizeZipPath(baseDir: string, target: string): string {
 }
 
 /**
+ * Gets the relationships entry name for a given entry.
+ */
+function getRelationshipsEntryName(entryName: string): string {
+  const directory = path.posix.dirname(entryName);
+  const basename = path.posix.basename(entryName);
+  return path.posix.join(directory, "_rels", `${basename}.rels`);
+}
+
+/**
+ * Extracts layout information from layout XML.
+ */
+function parseLayoutInfo(layoutXml: string): { name: string; type?: string } {
+  const name = /<p:cSld\b[^>]*name="([^"]*)"/.exec(layoutXml)?.[1] ?? "";
+  const type = /<p:sldLayout\b[^>]*type="([^"]+)"/.exec(layoutXml)?.[1];
+  return { name, type };
+}
+
+/**
  * Reads an entry from the zip as a string.
  */
 function requireEntry(zip: Map<string, Buffer>, entryName: string): string {
@@ -575,33 +593,30 @@ export async function get(filePath: string, pptPath: string): Promise<Result<unk
 
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error?.code || "operation_failed", slidePathResult.error?.message || "Failed to get slide entry path");
   }
 
   const slideEntry = slidePathResult.data;
-  const slideXml = requireEntry(zip, slideEntry);
+  const slideXml = requireEntry(zip, slideEntry!);
 
-  // Determine element type from path
-  if (/<\/slide\[/) {
-    // Check if it's a placeholder
-    if (isPlaceholderPath(pptPath)) {
-      return getPlaceholder(filePath, slideIndex, pptPath.includes("[title]") ? "title" : "body");
-    }
+  // Check if it's a placeholder
+  if (isPlaceholderPath(pptPath)) {
+    return getPlaceholder(filePath, slideIndex, pptPath.includes("[title]") ? "title" : "body");
   }
 
   // Parse the path to get the element type and index
   const pathResult = parsePath(pptPath);
   if (!pathResult.ok) {
-    return pathResult;
+    return err(pathResult.error?.code || "invalid_path", pathResult.error?.message || "Failed to parse path");
   }
 
-  const segments = pathResult.data.segments;
+  const segments = pathResult.data!.segments;
   if (segments.length === 1 && segments[0].name === "slide") {
     // Return slide
     return getSlide(filePath, slideIndex);
@@ -644,16 +659,16 @@ export async function get(filePath: string, pptPath: string): Promise<Result<unk
 export async function getSlide(filePath: string, index: number): Promise<Result<SlideModel>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, index);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error?.code || "operation_failed", slidePathResult.error?.message || "Failed to get slide entry path");
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   // Get all slides info for layout name lookup
@@ -661,7 +676,7 @@ export async function getSlide(filePath: string, index: number): Promise<Result<
   if (!slidesInfoResult.ok) {
     return err("operation_failed", "Could not get slides info");
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
   const slideInfo = slidesInfo[index - 1];
 
   // Parse shapes
@@ -670,9 +685,50 @@ export async function getSlide(filePath: string, index: number): Promise<Result<
   const charts = parseChartsFromSlideXml(zip, slideXml, index);
   const placeholders = parsePlaceholdersFromSlideXml(slideXml, index);
 
-  // Get title from first title placeholder
+  // Extract layout and theme info by following relationships
+  const slideRelsPath = getRelationshipsEntryName(slideEntry);
+  const slideRelsXml = zip.get(slideRelsPath)?.toString("utf8") ?? "";
+  const slideRels = parseRelationshipEntries(slideRelsXml);
+  const layoutRel = slideRels.find(r => r.type?.endsWith("/slideLayout"));
+
+  let layoutName = "";
+  let layoutType: string | undefined;
+  let themeName: string | undefined;
+
+  if (layoutRel) {
+    const layoutPath = normalizeZipPath(path.posix.dirname(slideEntry), layoutRel.target);
+    const layoutXml = zip.get(layoutPath)?.toString("utf8") ?? "";
+    const layoutInfo = parseLayoutInfo(layoutXml);
+    layoutName = layoutInfo.name;
+    layoutType = layoutInfo.type;
+
+    // Follow to master and then to theme
+    const layoutRelsPath = getRelationshipsEntryName(layoutPath);
+    const layoutRelsXml = zip.get(layoutRelsPath)?.toString("utf8") ?? "";
+    const layoutRels = parseRelationshipEntries(layoutRelsXml);
+    const masterRel = layoutRels.find(r => r.type?.endsWith("/slideMaster"));
+
+    if (masterRel) {
+      const masterPath = normalizeZipPath(path.posix.dirname(layoutPath), masterRel.target);
+      const masterRelsPath = getRelationshipsEntryName(masterPath);
+      const masterRelsXml = zip.get(masterRelsPath)?.toString("utf8") ?? "";
+      const masterRels = parseRelationshipEntries(masterRelsXml);
+      const themeRel = masterRels.find(r => r.type?.endsWith("/theme"));
+
+      if (themeRel) {
+        const themePath = normalizeZipPath(path.posix.dirname(masterPath), themeRel.target);
+        const themeXml = zip.get(themePath)?.toString("utf8") ?? "";
+        const themeNameMatch = /<a:theme\b[^>]*name="([^"]*)"/.exec(themeXml);
+        themeName = themeNameMatch?.[1];
+      }
+    }
+  }
+
+  // Get title from first title placeholder, or first shape with title placeholder type, or first shape with text
   const titlePlaceholder = placeholders.find(p => p.type === "title");
-  const title = titlePlaceholder?.text || shapes.find(s => s.placeholderType === "title")?.text;
+  const titleFromPlaceholder = titlePlaceholder?.text || shapes.find(s => s.placeholderType === "title")?.text;
+  // Fallback to first shape with text if no title placeholder found
+  const title = titleFromPlaceholder || shapes.find(s => s.text && s.text.trim().length > 0)?.text;
 
   // Get notes
   const notesResult = await getSlideNotes(zip, index);
@@ -683,7 +739,9 @@ export async function getSlide(filePath: string, index: number): Promise<Result<
     path: `/slide[${index}]`,
     title,
     notes,
-    layout: slideInfo?.relId,
+    layout: layoutName || undefined,
+    layoutType,
+    themeName,
     shapes,
     tables,
     charts,
@@ -773,16 +831,16 @@ export async function getShape(filePath: string, pptPath: string): Promise<Resul
 
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error?.code || "operation_failed", slidePathResult.error?.message || "Failed to get slide entry path");
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   // Extract shape index
@@ -868,16 +926,16 @@ export async function getTable(filePath: string, pptPath: string): Promise<Resul
 
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error?.code || "operation_failed", slidePathResult.error?.message || "Failed to get slide entry path");
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   // Extract table index
@@ -917,16 +975,16 @@ export async function getChart(filePath: string, pptPath: string): Promise<Resul
 
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error?.code || "operation_failed", slidePathResult.error?.message || "Failed to get slide entry path");
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   // Extract chart index
@@ -1050,16 +1108,16 @@ export async function getPlaceholder(
 ): Promise<Result<PlaceholderModel>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error?.code || "operation_failed", slidePathResult.error?.message || "Failed to get slide entry path");
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   // Find placeholder with matching type
@@ -1128,37 +1186,38 @@ export async function query(
 ): Promise<Result<{ shapes: ShapeModel[]; tables: TableModel[]; charts: ChartModel[]; placeholders: PlaceholderModel[] }>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const parsedSelector = parseSelector(selector);
   if (!parsedSelector.ok) {
     return invalidInput(`Invalid selector: ${selector}`);
   }
 
-  const sel = parsedSelector.data;
+  const sel = parsedSelector.data!;
 
   // If slide number is specified, query within that slide
   if (sel.slideNum !== undefined) {
     const slideResult = await queryShapesOnSlide(filePath, sel.slideNum, selector);
     if (!slideResult.ok) {
-      return slideResult;
+      return err(slideResult.error?.code || "operation_failed", slideResult.error?.message || "Failed to query shapes");
     }
+    const data = slideResult.data!;
     return ok({
-      shapes: slideResult.data.filter((e): e is ShapeModel => e.type === "shape"),
-      tables: slideResult.data.filter((e): e is TableModel => e.type === "table"),
-      charts: slideResult.data.filter((e): e is ChartModel => e.type === "chart"),
-      placeholders: slideResult.data.filter((e): e is PlaceholderModel => e.type === "placeholder"),
+      shapes: data.filter((e): e is ShapeModel => "type" in e && e.type === "shape"),
+      tables: data.filter((e): e is TableModel => "rows" in e),
+      charts: data.filter((e): e is ChartModel => "title" in e || "series" in e),
+      placeholders: data.filter((e): e is PlaceholderModel => "index" in e || "name" in e),
     });
   }
 
   // Query across all slides
   const slidesInfoResult = getSlideInfo(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error?.code || "operation_failed", slidesInfoResult.error?.message || "Failed to get slides info");
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   const allShapes: ShapeModel[] = [];
   const allTables: TableModel[] = [];
@@ -1232,15 +1291,15 @@ export async function querySlides(
 ): Promise<Result<SlideModel[]>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidesInfoResult = getSlideInfo(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error?.code || "operation_failed", slidesInfoResult.error?.message || "Failed to get slides info");
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   const slides: SlideModel[] = [];
 
@@ -1251,17 +1310,17 @@ export async function querySlides(
         const parsed = parseSelector(selector);
         if (parsed.ok) {
           // Filter based on selector
-          const sel = parsed.data;
+          const sel = parsed.data!;
           if (sel.textContains) {
             // Filter by text content
-            const text = slideResult.data.title || "";
+            const text = slideResult.data!.title || "";
             if (!text.includes(sel.textContains)) {
               continue;
             }
           }
         }
       }
-      slides.push(slideResult.data);
+      slides.push(slideResult.data!);
     }
   }
 
@@ -1286,16 +1345,16 @@ export async function queryShapes(
 ): Promise<Result<Array<ShapeModel | TableModel | ChartModel | PlaceholderModel>>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error?.code || "operation_failed", zipResult.error?.message || "Failed to load presentation");
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidePathResult = getSlideEntryPath(zip, slideIndex);
   if (!slidePathResult.ok) {
-    return slidePathResult;
+    return err(slidePathResult.error?.code || "operation_failed", slidePathResult.error?.message || "Failed to get slide entry path");
   }
 
-  const slideEntry = slidePathResult.data;
+  const slideEntry = slidePathResult.data!;
   const slideXml = requireEntry(zip, slideEntry);
 
   const results: Array<ShapeModel | TableModel | ChartModel | PlaceholderModel> = [];
@@ -1386,7 +1445,12 @@ function matchesSelector(
 
   // Check text contains
   if (selector.textContains) {
-    const text = "text" in element ? element.text : "title" in element ? element.title : "";
+    let text = "";
+    if ("text" in element) {
+      text = element.text ?? "";
+    } else if ("title" in element) {
+      text = (element as ChartModel).title ?? "";
+    }
     if (!text.includes(selector.textContains)) {
       return false;
     }
@@ -1445,10 +1509,10 @@ export async function getShapeProperties(
 }>> {
   const shapeResult = await getShape(filePath, pptPath);
   if (!shapeResult.ok) {
-    return shapeResult;
+    return err(shapeResult.error?.code || "operation_failed", shapeResult.error?.message || "Failed to get shape");
   }
 
-  const shape = shapeResult.data;
+  const shape = shapeResult.data!;
   return ok({
     x: shape.x,
     y: shape.y,
@@ -1499,24 +1563,26 @@ export async function getTextContent(
 
     const placeholderResult = await getPlaceholder(filePath, slideIndex, type);
     if (!placeholderResult.ok) {
-      return placeholderResult;
+      return err(placeholderResult.error?.code || "operation_failed", placeholderResult.error?.message || "Failed to get placeholder");
     }
 
+    const placeholder = placeholderResult.data!;
     return ok({
-      text: placeholderResult.data.text || "",
-      paragraphs: placeholderResult.data.shape?.paragraphs || [],
+      text: placeholder.text || "",
+      paragraphs: placeholder.shape?.paragraphs || [],
     });
   }
 
   // Otherwise, treat as shape
   const shapeResult = await getShape(filePath, pptPath);
   if (!shapeResult.ok) {
-    return shapeResult;
+    return err(shapeResult.error?.code || "operation_failed", shapeResult.error?.message || "Failed to get shape");
   }
 
+  const shape = shapeResult.data!;
   return ok({
-    text: shapeResult.data.text || "",
-    paragraphs: shapeResult.data.paragraphs || [],
+    text: shape.text || "",
+    paragraphs: shape.paragraphs || [],
   });
 }
 
@@ -1547,10 +1613,10 @@ export async function getTableStructure(
 }>> {
   const tableResult = await getTable(filePath, pptPath);
   if (!tableResult.ok) {
-    return tableResult;
+    return err(tableResult.error?.code || "operation_failed", tableResult.error?.message || "Failed to get table");
   }
 
-  const table = tableResult.data;
+  const table = tableResult.data!;
   return ok({
     path: table.path,
     name: table.name,
@@ -1588,10 +1654,10 @@ export async function getChartData(
 }>> {
   const chartResult = await getChart(filePath, pptPath);
   if (!chartResult.ok) {
-    return chartResult;
+    return err(chartResult.error?.code || "operation_failed", chartResult.error?.message || "Failed to get chart");
   }
 
-  const chart = chartResult.data;
+  const chart = chartResult.data!;
   return ok({
     path: chart.path,
     title: chart.title,

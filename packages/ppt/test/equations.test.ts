@@ -9,7 +9,7 @@ import {
   getEquations,
   setEquation,
   removeEquation,
-} from "../src/equations.ts";
+} from "../src/equations.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -146,7 +146,7 @@ test("setEquation - updates an existing equation", async () => {
     assert.ok(addResult.ok, `addEquation failed: ${addResult.error?.message}`);
 
     // Update the equation
-    const setResult = await setEquation(tempPath, addResult.data.path, "\\frac{x}{y}");
+    const setResult = await setEquation(tempPath, addResult.data!.path, "\\frac{x}{y}");
     assert.ok(setResult.ok, `setEquation failed: ${setResult.error?.message}`);
 
     // Verify the update
@@ -186,7 +186,7 @@ test("removeEquation - removes an equation from a slide", async () => {
     assert.ok(addResult.ok, `addEquation failed: ${addResult.error?.message}`);
 
     // Remove the equation
-    const removeResult = await removeEquation(tempPath, addResult.data.path);
+    const removeResult = await removeEquation(tempPath, addResult.data!.path);
     assert.ok(removeResult.ok, `removeEquation failed: ${removeResult.error?.message}`);
   } finally {
     // Clean up

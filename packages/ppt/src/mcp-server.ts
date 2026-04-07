@@ -20,11 +20,11 @@ import {
   setShapeText,
   addShape,
   removeShape,
-  swapShapes,
   setShapeProperty,
 } from "./shapes.js";
 import {
   swapSlides,
+  swapShapes,
   copyShape,
   copySlide,
   rawGet,

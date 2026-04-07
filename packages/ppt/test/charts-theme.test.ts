@@ -9,14 +9,14 @@ import {
   addChart,
   setChartData,
   setChartType,
-} from "../src/charts.ts";
+} from "../src/charts.js";
 
 import {
   getTheme,
   getThemeColor,
   setThemeColor,
   getThemeFont,
-} from "../src/theme.ts";
+} from "../src/theme.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/data_presentation.pptx";
 const CHART_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source/examples/binaries/budget_review_v2.pptx";
@@ -72,9 +72,9 @@ test("getChart - works with chart-containing presentation", async () => {
     // slide6 has a chart
     const result = await getChart(tempPath, "/slide[6]/chart[1]");
     if (result.ok) {
-      assert.ok(result.data.chart);
-      assert.ok(result.data.chart.path);
-      assert.ok(result.data.chart.type);
+      assert.ok(result.data!.chart);
+      assert.ok(result.data!.chart.path);
+      assert.ok(result.data!.chart.type);
     } else {
       // Chart extraction may have issues, but shouldn't throw
       assert.ok(result.error);
@@ -301,8 +301,8 @@ test("getTheme - returns theme info", async () => {
   try {
     const result = await getTheme(tempPath);
     if (result.ok) {
-      assert.ok(result.data.theme);
-      assert.ok(result.data.theme.colors || result.data.theme.fonts);
+      assert.ok(result.data!.theme);
+      assert.ok(result.data!.theme.colors || result.data!.theme.fonts);
     } else {
       // May fail if theme extraction has issues
       assert.ok(result.error);
@@ -317,9 +317,9 @@ test("getThemeColor - returns accent1 color", async () => {
   try {
     const result = await getThemeColor(tempPath, "accent1");
     if (result.ok) {
-      assert.ok(result.data.color);
+      assert.ok(result.data!.color);
       // Should be a hex color
-      assert.ok(/^[0-9A-F]{6}$/i.test(result.data.color));
+      assert.ok(/^[0-9A-F]{6}$/i.test(result.data!.color));
     } else {
       // May fail if theme doesn't exist or color doesn't exist
       assert.ok(result.error);
@@ -334,7 +334,7 @@ test("getThemeColor - returns dk1 (dark1) color", async () => {
   try {
     const result = await getThemeColor(tempPath, "dk1");
     if (result.ok) {
-      assert.ok(result.data.color);
+      assert.ok(result.data!.color);
     } else {
       assert.ok(result.error);
     }
@@ -348,7 +348,7 @@ test("getThemeColor - returns lt1 (light1) color", async () => {
   try {
     const result = await getThemeColor(tempPath, "lt1");
     if (result.ok) {
-      assert.ok(result.data.color);
+      assert.ok(result.data!.color);
     } else {
       assert.ok(result.error);
     }
@@ -431,8 +431,8 @@ test("getThemeFont - returns major font", async () => {
   try {
     const result = await getThemeFont(tempPath, "major");
     if (result.ok) {
-      assert.ok(result.data.font);
-      assert.ok(typeof result.data.font === "string");
+      assert.ok(result.data!.font);
+      assert.ok(typeof result.data!.font === "string");
     } else {
       // May fail if theme doesn't exist or font doesn't exist
       assert.ok(result.error);
@@ -447,8 +447,8 @@ test("getThemeFont - returns minor font", async () => {
   try {
     const result = await getThemeFont(tempPath, "minor");
     if (result.ok) {
-      assert.ok(result.data.font);
-      assert.ok(typeof result.data.font === "string");
+      assert.ok(result.data!.font);
+      assert.ok(typeof result.data!.font === "string");
     } else {
       assert.ok(result.error);
     }
@@ -462,7 +462,7 @@ test("getThemeFont - returns heading font (alias for major)", async () => {
   try {
     const result = await getThemeFont(tempPath, "heading");
     if (result.ok) {
-      assert.ok(result.data.font);
+      assert.ok(result.data!.font);
     } else {
       assert.ok(result.error);
     }
@@ -476,7 +476,7 @@ test("getThemeFont - returns body font (alias for minor)", async () => {
   try {
     const result = await getThemeFont(tempPath, "body");
     if (result.ok) {
-      assert.ok(result.data.font);
+      assert.ok(result.data!.font);
     } else {
       assert.ok(result.error);
     }

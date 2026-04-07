@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import {
   getSlides,
   addSlide,
-} from "../src/slides.ts";
+} from "../src/slides.js";
 
 import {
   swapSlides,
@@ -17,7 +17,7 @@ import {
   rawGet,
   rawSet,
   batch,
-} from "../src/mutations.ts";
+} from "../src/mutations.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -121,17 +121,17 @@ test("copySlide - duplicates a slide", async () => {
   try {
     const beforeResult = await getSlides(tempPath);
     assert.ok(beforeResult.ok);
-    const beforeCount = beforeResult.data.total;
+    const beforeCount = beforeResult.data!.total;
 
     // Copy slide 1
     const copyResult = await copySlide(tempPath, 1, -1);
     assert.ok(copyResult.ok, `copySlide failed: ${copyResult.error?.message}`);
-    assert.ok(copyResult.data);
-    assert.ok(copyResult.data.path);
+    assert.ok(copyResult.data!);
+    assert.ok(copyResult.data!.path);
 
     const afterResult = await getSlides(tempPath);
     assert.ok(afterResult.ok);
-    assert.equal(afterResult.data.total, beforeCount + 1);
+    assert.equal(afterResult.data!.total, beforeCount + 1);
   } finally {
     // Clean up
   }
@@ -142,16 +142,16 @@ test("copySlide - inserts copy at specific position", async () => {
   try {
     const beforeResult = await getSlides(tempPath);
     assert.ok(beforeResult.ok);
-    const beforeCount = beforeResult.data.total;
+    const beforeCount = beforeResult.data!.total;
 
     // Copy slide 1 and insert at position 2
     const copyResult = await copySlide(tempPath, 1, 2);
     assert.ok(copyResult.ok, `copySlide failed: ${copyResult.error?.message}`);
-    assert.ok(copyResult.data);
+    assert.ok(copyResult.data!);
 
     const afterResult = await getSlides(tempPath);
     assert.ok(afterResult.ok);
-    assert.equal(afterResult.data.total, beforeCount + 1);
+    assert.equal(afterResult.data!.total, beforeCount + 1);
   } finally {
     // Clean up
   }
@@ -218,7 +218,7 @@ test("batch - returns error for unknown operation", async () => {
   try {
     const result = await batch(tempPath, [
       { op: "unknown", params: {} },
-    ]);
+    ] as unknown as Parameters<typeof batch>[1]);
     assert.ok(!result.ok);
     assert.equal(result.error?.code, "invalid_input");
   } finally {

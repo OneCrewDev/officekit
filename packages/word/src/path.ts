@@ -120,7 +120,7 @@ export function parsePath(path: string): Result<ParsedPath> {
   while (remaining.length > 0 && remaining !== "/") {
     const segmentResult = parseSegment(remaining);
     if (!segmentResult.ok) {
-      return segmentResult;
+      return err(segmentResult.error?.code ?? "invalid_path", segmentResult.error?.message ?? "Failed to parse segment");
     }
 
     const { segment, rest } = segmentResult.data as { segment: PathSegment; rest: string };

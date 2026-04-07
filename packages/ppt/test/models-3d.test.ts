@@ -9,7 +9,7 @@ import {
   add3DModel,
   remove3DModel,
   set3DModelRotation,
-} from "../src/models-3d.ts";
+} from "../src/models-3d.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 

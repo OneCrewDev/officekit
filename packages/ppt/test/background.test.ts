@@ -9,7 +9,7 @@ import {
   setSlideBackground,
   setGradientFill,
   setPictureFill,
-} from "../src/background.ts";
+} from "../src/background.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
@@ -25,7 +25,7 @@ test("getSlideBackground - gets slide background", async () => {
     const result = await getSlideBackground(tempPath, 1);
     // May succeed with empty background or fail if no background
     if (result.ok) {
-      assert.ok(result.data.background);
+      assert.ok(result.data!.background);
     } else {
       assert.ok(result.error);
     }

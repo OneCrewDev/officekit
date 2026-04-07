@@ -138,7 +138,7 @@ export function mapErr<T>(result: Result<T>, fn: (error: ResultError) => ResultE
   if (isOk(result)) {
     return result;
   }
-  return { ok: false, error: fn(result.error) };
+  return { ok: false, error: fn(result.error!) };
 }
 
 /**

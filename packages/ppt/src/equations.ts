@@ -482,10 +482,13 @@ export async function addEquation(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult as Result<never>;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntryPath = slidePathResult.data;
+    if (!slideEntryPath) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntryPath);
     const slideRelsPath = getRelationshipsEntryName(slideEntryPath);
     const slideRelsXml = zip.get(slideRelsPath)?.toString("utf8") ?? "";
@@ -563,10 +566,13 @@ export async function getEquations(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult as Result<never>;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntryPath = slidePathResult.data;
+    if (!slideEntryPath) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntryPath);
 
     // Find all shapes that contain equations
@@ -637,10 +643,13 @@ export async function setEquation(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult as Result<never>;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntryPath = slidePathResult.data;
+    if (!slideEntryPath) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntryPath);
 
     // Determine if input is LaTeX or OMML
@@ -760,10 +769,13 @@ export async function removeEquation(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult as Result<never>;
+      return err(slidePathResult.error?.code ?? "slide_not_found", slidePathResult.error?.message ?? "Failed to get slide path");
     }
 
     const slideEntryPath = slidePathResult.data;
+    if (!slideEntryPath) {
+      return err("slide_not_found", "Slide entry not found");
+    }
     const slideXml = requireEntry(zip, slideEntryPath);
 
     // Find the shape index

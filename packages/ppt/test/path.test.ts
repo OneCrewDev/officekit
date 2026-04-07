@@ -21,7 +21,7 @@ import {
   isValidPath,
   getElementType,
   isElementType,
-} from "../src/path.ts";
+} from "../src/path.js";
 
 test("parsePath - parses root paths", () => {
   const result = parsePath("/");

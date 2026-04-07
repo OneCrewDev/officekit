@@ -246,7 +246,7 @@ function getThemeColors(zip: Map<string, Buffer>): Map<string, string> {
         const schemeContent = colorSchemeMatch[2];
 
         // Extract individual colors
-        const colorPatterns: [string, string][] = [
+        const colorPatterns: [string, RegExp][] = [
           ["dk1", /<a:dk1>[\s\S]*?<a:srgbClr[^>]*val="([^"]*)"[^>]*>[\s\S]*?<\/a:dk1>/],
           ["dk2", /<a:dk2>[\s\S]*?<a:srgbClr[^>]*val="([^"]*)"[^>]*>[\s\S]*?<\/a:dk2>/],
           ["lt1", /<a:lt1>[\s\S]*?<a:srgbClr[^>]*val="([^"]*)"[^>]*>[\s\S]*?<\/a:lt1>/],
@@ -755,15 +755,15 @@ export async function viewAsHtml(
 ): Promise<Result<ViewHtmlResult>> {
   const zipResult = await loadPresentation(filePath);
   if (!zipResult.ok) {
-    return zipResult;
+    return err(zipResult.error!.code, zipResult.error!.message, zipResult.error!.suggestion);
   }
-  const zip = zipResult.data;
+  const zip = zipResult.data!;
 
   const slidesInfoResult = getAllSlideEntries(zip);
   if (!slidesInfoResult.ok) {
-    return slidesInfoResult;
+    return err(slidesInfoResult.error!.code, slidesInfoResult.error!.message, slidesInfoResult.error!.suggestion);
   }
-  const slidesInfo = slidesInfoResult.data;
+  const slidesInfo = slidesInfoResult.data!;
 
   // Filter to specific slide if requested
   const targetSlides = slideIndex
@@ -838,25 +838,25 @@ export async function generatePreview(
   if (format === "svg") {
     // Dynamic import to avoid circular dependency
     const { viewAsSvg } = await import("./preview-svg.js");
-    const result = await viewAsSvg(filePath, options?.slides?.[0]);
-    if (!result.ok) {
-      return result;
+    const svgResult = await viewAsSvg(filePath, options?.slides?.[0]);
+    if (!svgResult.ok) {
+      return err(svgResult.error!.code, svgResult.error!.message, svgResult.error!.suggestion);
     }
     return ok({
       format: "svg",
-      slideCount: result.data.slideCount,
-      output: result.data.svg,
+      slideCount: svgResult.data!.slideCount,
+      output: svgResult.data!.svg,
     });
   }
 
   // Default to HTML
-  const result = await viewAsHtml(filePath, options?.slides?.[0]);
-  if (!result.ok) {
-    return result;
+  const htmlResult = await viewAsHtml(filePath, options?.slides?.[0]);
+  if (!htmlResult.ok) {
+    return err(htmlResult.error!.code, htmlResult.error!.message, htmlResult.error!.suggestion);
   }
   return ok({
     format: "html",
-    slideCount: result.data.slideCount,
-    output: result.data.html,
+    slideCount: htmlResult.data!.slideCount,
+    output: htmlResult.data!.html,
   });
 }

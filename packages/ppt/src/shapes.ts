@@ -10,7 +10,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createStoredZip, readStoredZip } from "../../core/src/zip.js";
-import { err, ok, invalidInput, notFound } from "./result.js";
+import { err, ok, invalidInput, notFound, isOk } from "./result.js";
 import type { Result } from "./types.js";
 import { getSlideIndex } from "./path.js";
 
@@ -155,10 +155,10 @@ export async function setShapeText(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as Result<void>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -340,10 +340,10 @@ export async function setShapeProperty(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as Result<void>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -605,10 +605,10 @@ export async function addShape(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as unknown as Result<{ path: string }>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     // Count existing shapes to determine new shape index
@@ -755,10 +755,10 @@ export async function getShapeType(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as unknown as Result<{ type: string }>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -852,10 +852,10 @@ export async function setShapeFill(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as Result<void>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -1025,10 +1025,10 @@ export async function setShapeLine(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as Result<void>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -1188,10 +1188,10 @@ export async function setShapeEffect(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as Result<void>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -1327,10 +1327,10 @@ export async function removeShape(filePath: string, pptPath: string): Promise<Re
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as Result<void>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     const shapeIndex = extractShapeIndex(pptPath);
@@ -1424,10 +1424,10 @@ export async function setSlideProperty(
 
     const slidePathResult = getSlideEntryPath(zip, slideIndex);
     if (!slidePathResult.ok) {
-      return slidePathResult;
+      return slidePathResult as Result<void>;
     }
 
-    const slideEntry = slidePathResult.data;
+    const slideEntry = slidePathResult.data!;
     const slideXml = requireEntry(zip, slideEntry);
 
     let updatedSlideXml: string;

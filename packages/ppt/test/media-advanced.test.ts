@@ -11,7 +11,7 @@ import {
   getMediaElements,
   removeMediaElement,
   setMediaOptions,
-} from "../src/media-advanced.ts";
+} from "../src/media-advanced.js";
 
 const TEST_PPTX = "/Users/llm/Desktop/Code/office/officekit/packages/parity-tests/fixtures/source-officecli/examples/ppt/outputs/beautiful_presentation.pptx";
 
