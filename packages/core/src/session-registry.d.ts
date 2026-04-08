@@ -6,6 +6,7 @@ export interface SessionRecord {
   url?: string;
   port?: number;
   format?: string;
+  socketPath?: string;
 }
 
 export function getSessionFilePath(kind: "watch" | "resident", filePath: string): string;

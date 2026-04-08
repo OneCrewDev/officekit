@@ -1,3 +1,4 @@
+import { createConnection } from "node:net";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { OfficekitError, UsageError } from "./errors.js";
@@ -54,6 +55,7 @@ import type {
   ExcelSheetModel as ExcelSheet,
   ExcelWorkbookSettings,
 } from "../../excel/src/model.js";
+import { readSessionRecord } from "./session-registry.js";
 
 export interface WordParagraph {
   text: string;
@@ -1356,7 +1358,7 @@ function stampDocument(document: OfficekitDocument) {
   document.updatedAt = new Date().toISOString();
 }
 
-async function persistDocument(filePath: string, document: OfficekitDocument) {
+export async function persistDocument(filePath: string, document: OfficekitDocument) {
   await mkdir(path.dirname(filePath), { recursive: true });
   const entries = buildDocumentEntries(document);
   await writeFile(filePath, createStoredZip(entries));
@@ -1369,6 +1371,126 @@ export async function loadDocument(filePath: string): Promise<OfficekitDocument>
     return parseExternalDocument(zip, filePath);
   }
   return normalizeDocument(JSON.parse(metadata.toString("utf8")) as OfficekitDocument);
+}
+
+export async function hasResidentSession(filePath: string): Promise<boolean> {
+  const session = await readSessionRecord("resident", filePath);
+  return session?.socketPath != null;
+}
+
+interface ResidentResponse {
+  id: string;
+  ok: boolean;
+  data?: unknown;
+  error?: string;
+}
+
+function requestToResident(socketPath: string, request: object): Promise<ResidentResponse> {
+  return new Promise((resolve, reject) => {
+    // Parse tcp://host:port or use as-is for Unix socket
+    let host: string;
+    let port: number;
+
+    if (socketPath.startsWith("tcp://")) {
+      const url = new URL(socketPath);
+      host = url.hostname || "127.0.0.1";
+      port = parseInt(url.port || "0", 10);
+    } else {
+      // Unix socket path
+      host = socketPath;
+      port = 0;
+    }
+
+    const socket = createConnection({ host, port, timeout: 5000 }, () => {
+      socket.write(JSON.stringify(request) + "\n");
+    });
+
+    let buffer = "";
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const response = JSON.parse(line) as ResidentResponse;
+          socket.end();
+          resolve(response);
+          return;
+        } catch {
+          // Continue buffering
+        }
+      }
+    });
+
+    socket.on("error", (err) => {
+      reject(err);
+    });
+
+    socket.setTimeout(5000, () => {
+      socket.destroy();
+      reject(new Error("Resident session request timed out"));
+    });
+  });
+}
+
+export async function getResidentDocument(filePath: string, targetPath: string): Promise<OfficekitDocument | unknown> {
+  const session = await readSessionRecord("resident", filePath);
+  if (!session?.socketPath) {
+    throw new OfficekitError("No resident session found", "no_session");
+  }
+
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const response = await requestToResident(session.socketPath, {
+    id,
+    command: "get",
+    targetPath,
+  });
+
+  if (!response.ok) {
+    throw new OfficekitError(response.error ?? "Failed to get from resident", "resident_error");
+  }
+
+  return response.data;
+}
+
+export async function queryResidentDocument(filePath: string, targetPath: string): Promise<unknown> {
+  const session = await readSessionRecord("resident", filePath);
+  if (!session?.socketPath) {
+    throw new OfficekitError("No resident session found", "no_session");
+  }
+
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const response = await requestToResident(session.socketPath, {
+    id,
+    command: "query",
+    targetPath,
+  });
+
+  if (!response.ok) {
+    throw new OfficekitError(response.error ?? "Failed to query resident", "resident_error");
+  }
+
+  return response.data;
+}
+
+export async function viewResidentDocument(filePath: string, mode: string): Promise<{ output: string }> {
+  const session = await readSessionRecord("resident", filePath);
+  if (!session?.socketPath) {
+    throw new OfficekitError("No resident session found", "no_session");
+  }
+
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const response = await requestToResident(session.socketPath, {
+    id,
+    command: "view",
+    mode,
+  });
+
+  if (!response.ok) {
+    throw new OfficekitError(response.error ?? "Failed to view resident", "resident_error");
+  }
+
+  return response.data as { output: string };
 }
 
 function buildDocumentEntries(document: OfficekitDocument) {
@@ -1409,7 +1531,7 @@ function buildDocumentEntries(document: OfficekitDocument) {
   ];
 }
 
-function materializePath(document: OfficekitDocument, targetPath: string) {
+export function materializePath(document: OfficekitDocument, targetPath: string) {
   if (targetPath === "/" || targetPath === "") {
     return document;
   }

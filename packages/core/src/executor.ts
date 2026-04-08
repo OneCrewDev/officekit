@@ -1,4 +1,4 @@
-import { createDocument, addDocumentNode, addDocumentPart, checkDocument, getDocumentNode, importDelimitedData, loadDocument, mergeDocument, parseProps, queryDocumentNodes, rawDocument, rawSetDocument, removeDocumentNode, renderDocumentHtml, setDocumentNode, viewDocument, moveDocumentNode, swapDocumentNodes, copyDocumentNode, validateDocument } from "./document-store.js";
+import { createDocument, addDocumentNode, addDocumentPart, checkDocument, getDocumentNode, getResidentDocument, hasResidentSession, importDelimitedData, loadDocument, mergeDocument, parseProps, queryDocumentNodes, queryResidentDocument, rawDocument, rawSetDocument, removeDocumentNode, renderDocumentHtml, setDocumentNode, viewDocument, viewResidentDocument, moveDocumentNode, swapDocumentNodes, copyDocumentNode, validateDocument } from "./document-store.js";
 import { UnsupportedCapabilityError, UsageError } from "./errors.js";
 import { summarizeParity } from "./parity.js";
 import { readSessionRecord, removeSessionRecord, waitForSessionRecord } from "./session-registry.js";
@@ -58,9 +58,19 @@ export async function executeCommand(argv: string[]): Promise<CommandResult> {
     const targetPath = rest[1] ?? "/";
     if (!filePath) throw new UsageError(`${command} requires <file> [path].`);
     const parsed = parseProps(rest.slice(2));
-    const result = command === "query"
-      ? await queryDocumentNodes(filePath, targetPath)
-      : await getDocumentNode(filePath, targetPath);
+
+    // Try resident session first if available
+    const hasResident = await hasResidentSession(filePath);
+    let result: unknown;
+    if (hasResident) {
+      result = command === "query"
+        ? await queryResidentDocument(filePath, targetPath)
+        : await getResidentDocument(filePath, targetPath);
+    } else {
+      result = command === "query"
+        ? await queryDocumentNodes(filePath, targetPath)
+        : await getDocumentNode(filePath, targetPath);
+    }
     return { exitCode: 0, stdout: parsed.json || command === "query" ? JSON.stringify(result, null, 2) : summarizeResult(result) };
   }
 
@@ -68,8 +78,16 @@ export async function executeCommand(argv: string[]): Promise<CommandResult> {
     const filePath = rest[0];
     const mode = rest[1] ?? "outline";
     if (!filePath) throw new UsageError("view requires <file> <mode?>.");
-    const result = await viewDocument(filePath, mode);
-    return { exitCode: 0, stdout: result.output };
+
+    // Try resident session first if available
+    const hasResident = await hasResidentSession(filePath);
+    let output: string;
+    if (hasResident) {
+      output = (await viewResidentDocument(filePath, mode)).output;
+    } else {
+      output = (await viewDocument(filePath, mode)).output;
+    }
+    return { exitCode: 0, stdout: output };
   }
 
   if (command === "raw") {
