@@ -4275,7 +4275,7 @@ function evaluateRoundFormula(
 }
 
 function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, expression: string, sheet: ExcelSheetModel) {
-  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT|PROPER|CLEAN|REPT|CHAR|CODE|TEXT|FIXED|NUMBERVALUE|DOLLAR|YEN|T|N|VALUE|DEC2BIN|DEC2HEX|DEC2OCT|BIN2HEX|BIN2OCT|HEX2BIN|HEX2OCT|OCT2BIN|OCT2HEX|SWITCH|ADDRESS|ROMAN)\((.*)\)$/i.exec(expression);
+  const direct = /^(LEN|LEFT|RIGHT|MID|LOWER|UPPER|TRIM|CONCAT|CONCATENATE|FIND|SEARCH|REPLACE|SUBSTITUTE|EXACT|PROPER|CLEAN|REPT|CHAR|CODE|TEXT|FIXED|NUMBERVALUE|DOLLAR|YEN|T|N|VALUE|DEC2BIN|DEC2HEX|DEC2OCT|BIN2HEX|BIN2OCT|HEX2BIN|HEX2OCT|OCT2BIN|OCT2HEX|SWITCH|CHOOSE|ADDRESS|ROMAN)\((.*)\)$/i.exec(expression);
   if (!direct) return undefined;
   const fn = direct[1].toUpperCase();
   const args = splitFormulaArgs(direct[2]);
@@ -4438,6 +4438,20 @@ function evaluateTextFormulaForDisplay(state: ExcelWorkbookState | undefined, ex
   if (fn === "OCT2HEX") { const val = resolveText(args[0] ?? ""); const n = parseInt(val, 8); if (!Number.isFinite(n)) return undefined; const places = args[1] !== undefined ? Math.round(firstNumericFormulaArg(state, args[1], sheet, new Set()) ?? 0) : 0; let s = n.toString(16).toUpperCase(); if (places > 0) s = s.padStart(places, '0'); return s; }
   if (fn === "ROMAN") { const num = Math.round(firstNumericFormulaArg(state, args[0] ?? "0", sheet, new Set()) ?? 0); if (num < 0 || num > 3999) return undefined; const thousands = ['','M','MM','MMM']; const hundreds = ['','C','CC','CCC','CD','D','DC','DCC','DCCC','CM']; const tens = ['','X','XX','XXX','XL','L','LX','LXX','LXXX','XC']; const ones = ['','I','II','III','IV','V','VI','VII','VIII','IX']; return thousands[Math.floor(num/1000)] + hundreds[Math.floor((num%1000)/100)] + tens[Math.floor((num%100)/10)] + ones[num%10]; }
   if (fn === "ADDRESS") { const row = Math.round(firstNumericFormulaArg(state, args[0] ?? "1", sheet, new Set()) ?? 1); const col = Math.round(firstNumericFormulaArg(state, args[1] ?? "1", sheet, new Set()) ?? 1); const absNum = args[2] !== undefined ? Math.round(firstNumericFormulaArg(state, args[2], sheet, new Set()) ?? 1) : 1; const a1Style = args[3] === undefined || firstNumericFormulaArg(state, args[3], sheet, new Set()) !== 0; const sheetText = args[4] !== undefined ? resolveText(args[4]) : ""; const colStr = (() => { let c = ""; let n = col; while (n > 0) { c = String.fromCharCode(64 + (n % 26 || 26)) + c; n = Math.floor((n - 1) / 26); } return c; })(); const rowStr = String(row); if (!a1Style) return (sheetText ? sheetText + "!" : "") + "R" + rowStr + "C" + col; const absCol = absNum === 1 || absNum === 2 ? "$" + colStr : colStr; const absRow = absNum === 1 || absNum === 3 ? "$" + rowStr : rowStr; return (sheetText ? sheetText + "!" : "") + absCol + absRow; }
+  if (fn === "CHOOSE") {
+    const index = Math.round(firstNumericFormulaArg(state, args[0] ?? "1", sheet, new Set()) ?? 1);
+    if (index < 1 || index >= args.length) return undefined;
+    return resolveText(args[index] ?? "");
+  }
+  if (fn === "SWITCH") {
+    const val = resolveScalarValue(state, args[0] ?? "", sheet);
+    for (let i = 1; i + 1 < args.length; i += 2) {
+      const candidate = resolveScalarValue(state, args[i] ?? "", sheet);
+      if (candidate === val) return resolveText(args[i + 1] ?? "");
+    }
+    if (args.length % 2 === 0) return resolveText(args[args.length - 1] ?? "");
+    return undefined;
+  }
   return undefined;
 }
 

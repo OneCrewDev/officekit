@@ -879,6 +879,67 @@ describe("officekit CLI scaffold", () => {
     expect(textView.stdout).toContain("[/Sheet1/row[6]] Hello-World");
   });
 
+  test("supports broader statistical, logical, text, financial, and conversion formula helpers", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-formula-broad-"));
+    const filePath = path.join(dir, "formula-broad.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=1", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A2", "--prop", "value=2", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A3", "--prop", "value=2", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A4", "--prop", "value=4", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/B1", "--prop", "value=Hello"]);
+    await runCli(["set", filePath, "/Sheet1/B2", "--prop", "value=HELLO"]);
+    await runCli(["set", filePath, "/Sheet1/B3", "--prop", "value=2026-04-08"]);
+    await runCli(["set", filePath, "/Sheet1/C1", "--prop", "value=8", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/C2", "--prop", "value=", "--prop", "type=string"]);
+
+    await runCli(["set", filePath, "/Sheet1/D1", "--prop", "formula==MEDIAN(A1:A4)"]);
+    await runCli(["set", filePath, "/Sheet1/D2", "--prop", "formula==MODE(A1:A4)"]);
+    await runCli(["set", filePath, "/Sheet1/D3", "--prop", "formula==PERCENTILE(A1:A4,0.5)"]);
+    await runCli(["set", filePath, "/Sheet1/D4", "--prop", "formula==PERCENTRANK(A1:A4,2)"]);
+    await runCli(["set", filePath, "/Sheet1/D5", "--prop", "formula==COUNTBLANK(C1:C2)"]);
+    await runCli(["set", filePath, "/Sheet1/D6", "--prop", "formula==PRODUCT(A1:A4)"]);
+    await runCli(["set", filePath, "/Sheet1/D7", "--prop", "formula==QUOTIENT(9,2)"]);
+    await runCli(["set", filePath, "/Sheet1/D8", "--prop", "formula==SWITCH(A2,1,\"one\",2,\"two\",\"other\")"]);
+    await runCli(["set", filePath, "/Sheet1/D9", "--prop", "formula==CHOOSE(2,\"red\",\"blue\",\"green\")"]);
+    await runCli(["set", filePath, "/Sheet1/D10", "--prop", "formula==SEARCH(\"ell\",B1)"]);
+    await runCli(["set", filePath, "/Sheet1/D11", "--prop", "formula==SUBSTITUTE(B1,\"l\",\"x\",2)"]);
+    await runCli(["set", filePath, "/Sheet1/D12", "--prop", "formula==TEXT(12.3,\"0.0\")"]);
+    await runCli(["set", filePath, "/Sheet1/D13", "--prop", "formula==FIXED(12.345,1)"]);
+    await runCli(["set", filePath, "/Sheet1/D14", "--prop", "formula==NUMBERVALUE(\"1,234.5\")"]);
+    await runCli(["set", filePath, "/Sheet1/D15", "--prop", "formula==NETWORKDAYS_INTL(44204,44234,1)"]);
+    await runCli(["set", filePath, "/Sheet1/D16", "--prop", "formula==WORKDAY_INTL(44204,5,1)"]);
+    await runCli(["set", filePath, "/Sheet1/D17", "--prop", "formula==YEARFRAC(44204,44234)"]);
+    await runCli(["set", filePath, "/Sheet1/D18", "--prop", "formula==PMT(0.1/12,12,-1200)"]);
+
+    const values = await Promise.all(
+      Array.from({ length: 18 }, (_, index) => runCli(["get", filePath, `/Sheet1/D${index + 1}`, "--json"])),
+    );
+    const textView = await runCli(["view", filePath, "text"]);
+
+    expect(values[0].stdout).toContain('"evaluatedValue": "2"');
+    expect(values[1].stdout).toContain('"evaluatedValue": "2"');
+    expect(values[2].stdout).toContain('"evaluatedValue": "2"');
+    expect(values[3].stdout).toContain('"evaluatedValue": "0.3333333333"');
+    expect(values[4].stdout).toContain('"evaluatedValue": "1"');
+    expect(values[5].stdout).toContain('"evaluatedValue": "16"');
+    expect(values[6].stdout).toContain('"evaluatedValue": "4"');
+    expect(values[7].stdout).toContain('"evaluatedValue": "two"');
+    expect(values[8].stdout).toContain('"evaluatedValue": "blue"');
+    expect(values[9].stdout).toContain('"evaluatedValue": "2"');
+    expect(values[10].stdout).toContain('"evaluatedValue": "Helxo"');
+    expect(values[11].stdout).toContain('"evaluatedValue": "12.3"');
+    expect(values[12].stdout).toContain('"evaluatedValue": "12.3"');
+    expect(values[13].stdout).toContain('"evaluatedValue": "1234.5"');
+    expect(values[14].stdout).toContain('"evaluatedValue": "27"');
+    expect(values[15].stdout).toContain('"evaluatedValue": "44210"');
+    expect(values[16].stdout).toContain('"evaluatedValue": "0.08213552361396304"');
+    expect(values[17].stdout).toContain('"evaluatedValue": "100"');
+    expect(textView.stdout).toContain("[/Sheet1/row[8]] two");
+    expect(textView.stdout).toContain("[/Sheet1/row[9]] blue");
+    expect(textView.stdout).toContain("[/Sheet1/row[11]] Helxo");
+  });
+
   test("supports richer chart properties beyond title and series name", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-chart-props-"));
     const filePath = path.join(dir, "chart-props.xlsx");
