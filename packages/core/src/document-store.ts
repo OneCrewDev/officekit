@@ -36,7 +36,7 @@ import {
 import { getSlides, addSlide, removeSlide, moveSlide } from "../../ppt/src/slides.js";
 import { getSlide } from "../../ppt/src/query.js";
 import { swapSlides, swapShapes } from "../../ppt/src/mutations.js";
-import { addShape, removeShape } from "../../ppt/src/shapes.js";
+import { addShape, removeShape, setShapeText } from "../../ppt/src/shapes.js";
 import { viewAsText, viewAsAnnotated, viewAsOutline, viewAsStats, viewAsIssues } from "../../ppt/src/views.js";
 import { viewAsHtml } from "../../ppt/src/preview-html.js";
 import { viewAsSvg } from "../../ppt/src/preview-svg.js";
@@ -153,7 +153,50 @@ export async function addDocumentNode(filePath: string, targetPath: string, opti
       if (!result.ok) {
         throw new OfficekitError(result.error?.message ?? "Failed to add slide", "operation_failed");
       }
+      if (options.props.title || options.props.text) {
+        const slidePath = result.data?.path ?? "/slide[1]";
+        const slideIndex = Number(/^\/slide\[(\d+)\]$/.exec(slidePath)?.[1] ?? "1");
+        const titleShape = await addShape(
+          filePath,
+          slideIndex,
+          "rectangle",
+          { x: 685800, y: 457200 },
+          { width: 10972800, height: 914400 },
+        );
+        if (!titleShape.ok) {
+          throw new OfficekitError(titleShape.error?.message ?? "Failed to add title shape", "operation_failed");
+        }
+        const titleResult = await setShapeText(
+          filePath,
+          titleShape.data?.path ?? `/slide[${slideIndex}]/shape[1]`,
+          options.props.title ?? options.props.text ?? "",
+        );
+        if (!titleResult.ok) {
+          throw new OfficekitError(titleResult.error?.message ?? "Failed to set slide title", "operation_failed");
+        }
+      }
       return { ok: true, path: result.data?.path ?? "/slide[new]" };
+    }
+    const slideMatch = /^\/slide\[(\d+)\]$/.exec(targetPath);
+    if (slideMatch && options.type === "shape") {
+      const slideIndex = Number(slideMatch[1]);
+      const addResult = await addShape(
+        filePath,
+        slideIndex,
+        "rectangle",
+        { x: 914400, y: 1600200 },
+        { width: 10058400, height: 685800 },
+      );
+      if (!addResult.ok) {
+        throw new OfficekitError(addResult.error?.message ?? "Failed to add shape", "operation_failed");
+      }
+      if (options.props.text) {
+        const textResult = await setShapeText(filePath, addResult.data?.path ?? `/slide[${slideIndex}]/shape[1]`, options.props.text);
+        if (!textResult.ok) {
+          throw new OfficekitError(textResult.error?.message ?? "Failed to set shape text", "operation_failed");
+        }
+      }
+      return { ok: true, path: addResult.data?.path ?? `${targetPath}/shape[new]` };
     }
     throw new UsageError("PowerPoint add supports / with --type slide.");
   }
@@ -342,7 +385,26 @@ export async function getDocumentNode(filePath: string, targetPath: string) {
       if (!slideResult.ok) {
         throw new OfficekitError(slideResult.error?.message ?? "Failed to get slide", "operation_failed");
       }
-      return { ok: true, slide: slideResult.data, path: targetPath };
+      const slide = slideResult.data!;
+      let skippedTitleShape = false;
+      return {
+        ...slide,
+        layoutName: slide.layout,
+        shapes: slide.shapes
+          .filter((shape) => (shape.text ?? "").trim().length > 0)
+          .filter((shape) => {
+            if (!skippedTitleShape && shape.text === slide.title) {
+              skippedTitleShape = true;
+              return false;
+            }
+            return true;
+          })
+          .map((shape) => ({
+            text: shape.text,
+            name: shape.name,
+            kind: shape.placeholderType,
+          })),
+      };
     }
     throw new UsageError("PowerPoint get supports / or /slide[n].");
   }
@@ -539,6 +601,9 @@ export async function rawDocument(filePath: string, options: RawDocumentOptions 
     });
   }
   if (format === "word") {
+    if (!options.partPath) {
+      return JSON.stringify(await loadDocument(filePath), null, 2);
+    }
     return rawWordDocument(filePath, options.partPath ?? "/");
   }
   const document = await loadDocument(filePath);

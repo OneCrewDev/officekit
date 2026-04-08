@@ -1014,7 +1014,7 @@ export async function viewAsOutline(
       content.push({
         type: shape.type === "textbox" ? "shape" : (shape.type as OutlineContent["type"]),
         path: shape.path,
-        description: `Shape ${shapeIndex}:${shape.name ? ` (${shape.name})` : ""}${shape.text ? ` ${shape.text.slice(0, 30)}${shape.text.length > 30 ? "..." : ""}` : ""}`,
+        description: `Shape ${shapeIndex}: ${shape.text ? `${shape.text.slice(0, 30)}${shape.text.length > 30 ? "..." : ""}` : "(no text)"}`,
         children: children.length > 0 ? children : undefined,
       });
     }

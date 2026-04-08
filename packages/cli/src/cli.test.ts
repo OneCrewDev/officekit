@@ -809,6 +809,76 @@ describe("officekit CLI scaffold", () => {
     expect(rawStyles.stdout).toContain('hidden="1"');
   });
 
+  test("supports deeper OfficeCLI-style multi-criteria, text-join, and date/time formulas", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-formula-date-depth-"));
+    const filePath = path.join(dir, "formula-date-depth.xlsx");
+    await runCli(["create", filePath]);
+    await runCli(["set", filePath, "/Sheet1/A1", "--prop", "value=5", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A2", "--prop", "value=7", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/A3", "--prop", "value=9", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/B1", "--prop", "value=North"]);
+    await runCli(["set", filePath, "/Sheet1/B2", "--prop", "value=South"]);
+    await runCli(["set", filePath, "/Sheet1/B3", "--prop", "value=North"]);
+    await runCli(["set", filePath, "/Sheet1/C1", "--prop", "value=Open"]);
+    await runCli(["set", filePath, "/Sheet1/C2", "--prop", "value=Closed"]);
+    await runCli(["set", filePath, "/Sheet1/C3", "--prop", "value=Open"]);
+    await runCli(["set", filePath, "/Sheet1/D1", "--prop", "value=44204", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/D2", "--prop", "value=44234", "--prop", "type=number"]);
+    await runCli(["set", filePath, "/Sheet1/E1", "--prop", "value=Hello"]);
+    await runCli(["set", filePath, "/Sheet1/E2", "--prop", "value="]);
+    await runCli(["set", filePath, "/Sheet1/E3", "--prop", "value=World"]);
+
+    await runCli(["set", filePath, "/Sheet1/F1", "--prop", "formula==SUMIFS(A1:A3,B1:B3,\"North\",C1:C3,\"Open\")"]);
+    await runCli(["set", filePath, "/Sheet1/F2", "--prop", "formula==COUNTIFS(B1:B3,\"North\",C1:C3,\"Open\")"]);
+    await runCli(["set", filePath, "/Sheet1/F3", "--prop", "formula==AVERAGEIFS(A1:A3,B1:B3,\"North\",C1:C3,\"Open\")"]);
+    await runCli(["set", filePath, "/Sheet1/F4", "--prop", "formula==MAXIFS(A1:A3,B1:B3,\"North\")"]);
+    await runCli(["set", filePath, "/Sheet1/F5", "--prop", "formula==MINIFS(A1:A3,C1:C3,\"Open\")"]);
+    await runCli(["set", filePath, "/Sheet1/F6", "--prop", "formula==TEXTJOIN(\"-\",TRUE,E1:E3)"]);
+    await runCli(["set", filePath, "/Sheet1/F7", "--prop", "formula==DATE(2026,4,8)"]);
+    await runCli(["set", filePath, "/Sheet1/F8", "--prop", "formula==YEAR(D1)"]);
+    await runCli(["set", filePath, "/Sheet1/F9", "--prop", "formula==MONTH(D1)"]);
+    await runCli(["set", filePath, "/Sheet1/F10", "--prop", "formula==DAY(D1)"]);
+    await runCli(["set", filePath, "/Sheet1/F11", "--prop", "formula==DAYS(D2,D1)"]);
+    await runCli(["set", filePath, "/Sheet1/F12", "--prop", "formula==DATEDIF(D1,D2,\"D\")"]);
+    await runCli(["set", filePath, "/Sheet1/F13", "--prop", "formula==NETWORKDAYS(D1,D2)"]);
+    await runCli(["set", filePath, "/Sheet1/F14", "--prop", "formula==WORKDAY(D1,5)"]);
+    await runCli(["set", filePath, "/Sheet1/F15", "--prop", "formula==EOMONTH(D1,1)"]);
+
+    const f1 = await runCli(["get", filePath, "/Sheet1/F1", "--json"]);
+    const f2 = await runCli(["get", filePath, "/Sheet1/F2", "--json"]);
+    const f3 = await runCli(["get", filePath, "/Sheet1/F3", "--json"]);
+    const f4 = await runCli(["get", filePath, "/Sheet1/F4", "--json"]);
+    const f5 = await runCli(["get", filePath, "/Sheet1/F5", "--json"]);
+    const f6 = await runCli(["get", filePath, "/Sheet1/F6", "--json"]);
+    const f7 = await runCli(["get", filePath, "/Sheet1/F7", "--json"]);
+    const f8 = await runCli(["get", filePath, "/Sheet1/F8", "--json"]);
+    const f9 = await runCli(["get", filePath, "/Sheet1/F9", "--json"]);
+    const f10 = await runCli(["get", filePath, "/Sheet1/F10", "--json"]);
+    const f11 = await runCli(["get", filePath, "/Sheet1/F11", "--json"]);
+    const f12 = await runCli(["get", filePath, "/Sheet1/F12", "--json"]);
+    const f13 = await runCli(["get", filePath, "/Sheet1/F13", "--json"]);
+    const f14 = await runCli(["get", filePath, "/Sheet1/F14", "--json"]);
+    const f15 = await runCli(["get", filePath, "/Sheet1/F15", "--json"]);
+    const textView = await runCli(["view", filePath, "text"]);
+
+    expect(f1.stdout).toContain('"evaluatedValue": "14"');
+    expect(f2.stdout).toContain('"evaluatedValue": "2"');
+    expect(f3.stdout).toContain('"evaluatedValue": "7"');
+    expect(f4.stdout).toContain('"evaluatedValue": "9"');
+    expect(f5.stdout).toContain('"evaluatedValue": "5"');
+    expect(f6.stdout).toContain('"evaluatedValue": "Hello-World"');
+    expect(f7.stdout).toContain('"evaluatedValue": "46120"');
+    expect(f8.stdout).toContain('"evaluatedValue": "2021"');
+    expect(f9.stdout).toContain('"evaluatedValue": "1"');
+    expect(f10.stdout).toContain('"evaluatedValue": "8"');
+    expect(f11.stdout).toContain('"evaluatedValue": "30"');
+    expect(f12.stdout).toContain('"evaluatedValue": "30"');
+    expect(f13.stdout).toContain('"evaluatedValue": "21"');
+    expect(f14.stdout).toContain('"evaluatedValue": "44211"');
+    expect(f15.stdout).toContain('"evaluatedValue": "44254"');
+    expect(textView.stdout).toContain("[/Sheet1/row[6]] \t\t\t\t\tHello-World");
+  });
+
   test("supports richer chart properties beyond title and series name", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "officekit-excel-chart-props-"));
     const filePath = path.join(dir, "chart-props.xlsx");

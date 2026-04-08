@@ -69,54 +69,158 @@ function extractTextSimple(xml: string): string {
   return texts.join("");
 }
 
+interface BodyParagraphInfo {
+  index: number;
+  xml: string;
+  text: string;
+  style?: string;
+  paraId?: string;
+}
+
+interface BodyTableInfo {
+  index: number;
+  xml: string;
+  rows: number;
+  cols: number;
+  cells: string[][];
+}
+
+type BodyContentInfo =
+  | ({ type: "paragraph" } & BodyParagraphInfo)
+  | ({ type: "table" } & BodyTableInfo);
+
+function getBodyXml(xml: string): string {
+  const bodyMatch = xml.match(/<w:body\b[^>]*>([\s\S]*?)<\/w:body>/);
+  return bodyMatch?.[1] ?? "";
+}
+
+function findNextBodyTag(bodyXml: string, cursor: number) {
+  const candidates = [
+    { tag: "w:p", index: bodyXml.indexOf("<w:p", cursor) },
+    { tag: "w:tbl", index: bodyXml.indexOf("<w:tbl", cursor) },
+    { tag: "w:sectPr", index: bodyXml.indexOf("<w:sectPr", cursor) },
+  ].filter((candidate) => candidate.index >= 0);
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates.reduce((left, right) => (right.index < left.index ? right : left));
+}
+
+function readTopLevelElement(bodyXml: string, start: number, tagName: "w:p" | "w:tbl" | "w:sectPr") {
+  const startTagEnd = bodyXml.indexOf(">", start);
+  if (startTagEnd === -1) {
+    return null;
+  }
+
+  const startTag = bodyXml.slice(start, startTagEnd + 1);
+  if (startTag.endsWith("/>")) {
+    return { xml: startTag, end: startTagEnd + 1 };
+  }
+
+  const closeTag = `</${tagName}>`;
+  const closeIndex = bodyXml.indexOf(closeTag, startTagEnd + 1);
+  if (closeIndex === -1) {
+    return { xml: bodyXml.slice(start), end: bodyXml.length };
+  }
+
+  const end = closeIndex + closeTag.length;
+  return { xml: bodyXml.slice(start, end), end };
+}
+
+function parseTableCells(tableXml: string): string[][] {
+  const rows: string[][] = [];
+  for (const rowMatch of tableXml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)) {
+    const rowXml = rowMatch[0];
+    const cells: string[] = [];
+    for (const cellMatch of rowXml.matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/g)) {
+      cells.push(extractTextSimple(cellMatch[0]));
+    }
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function getBodyContentInfo(xml: string): BodyContentInfo[] {
+  const bodyXml = getBodyXml(xml);
+  if (!bodyXml) {
+    return [];
+  }
+
+  const content: BodyContentInfo[] = [];
+  let cursor = 0;
+  let paragraphIndex = 0;
+  let tableIndex = 0;
+
+  while (cursor < bodyXml.length) {
+    const next = findNextBodyTag(bodyXml, cursor);
+    if (!next) {
+      break;
+    }
+
+    if (next.tag === "w:sectPr") {
+      const sectPr = readTopLevelElement(bodyXml, next.index, "w:sectPr");
+      if (!sectPr) {
+        break;
+      }
+      cursor = sectPr.end;
+      continue;
+    }
+
+    const element = readTopLevelElement(bodyXml, next.index, next.tag as "w:p" | "w:tbl");
+    if (!element) {
+      break;
+    }
+
+    if (next.tag === "w:p") {
+      paragraphIndex += 1;
+      const paraXml = element.xml;
+      const styleMatch = paraXml.match(/<w:pStyle[^>]*w:val="([^"]*)"/);
+      const paraIdMatch = paraXml.match(/<w:paraId[^>]*w:val="([^"]*)"/);
+      content.push({
+        type: "paragraph",
+        index: paragraphIndex,
+        xml: paraXml,
+        text: extractTextSimple(paraXml),
+        style: styleMatch?.[1],
+        paraId: paraIdMatch?.[1],
+      });
+    } else {
+      tableIndex += 1;
+      const rows = parseTableCells(element.xml);
+      content.push({
+        type: "table",
+        index: tableIndex,
+        xml: element.xml,
+        rows: rows.length,
+        cols: rows[0]?.length ?? 0,
+        cells: rows,
+      });
+    }
+
+    cursor = element.end;
+  }
+
+  return content;
+}
+
 /**
  * Gets all paragraph texts from document XML.
  */
 function getParagraphsInfo(xml: string): Array<{ index: number; text: string; style?: string; paraId?: string }> {
-  const paragraphs: Array<{ index: number; text: string; style?: string; paraId?: string }> = [];
-
-  const paraRegex = /<w:p[\s\S]*?<\/w:p>/g;
-  let match;
-  let idx = 0;
-  while ((match = paraRegex.exec(xml)) !== null) {
-    idx++;
-    const paraXml = match[0];
-    const text = extractTextSimple(paraXml);
-
-    let style: string | undefined;
-    let paraId: string | undefined;
-
-    const styleMatch = paraXml.match(/<w:pStyle[^>]*w:val="([^"]*)"/);
-    if (styleMatch) style = styleMatch[1];
-
-    const paraIdMatch = paraXml.match(/<w:paraId[^>]*w:val="([^"]*)"/);
-    if (paraIdMatch) paraId = paraIdMatch[1];
-
-    paragraphs.push({ index: idx, text, style, paraId });
-  }
-
-  return paragraphs;
+  return getBodyContentInfo(xml)
+    .filter((item): item is Extract<BodyContentInfo, { type: "paragraph" }> => item.type === "paragraph")
+    .map(({ index, text, style, paraId }) => ({ index, text, style, paraId }));
 }
 
 /**
  * Gets all table info from document XML.
  */
 function getTablesInfo(xml: string): Array<{ index: number; rows: number; cols: number }> {
-  const tables: Array<{ index: number; rows: number; cols: number }> = [];
-
-  const tblRegex = /<w:tbl[\s\S]*?<\/w:tbl>/g;
-  let match;
-  let idx = 0;
-  while ((match = tblRegex.exec(xml)) !== null) {
-    idx++;
-    const tblXml = match[0];
-    const rows = (tblXml.match(/<w:tr[\s\S]*?<\/w:tr>/g) || []).length;
-    const firstRow = tblXml.match(/<w:tr[\s\S]*?<\/w:tr>/);
-    const cols = firstRow ? (firstRow[0].match(/<w:tc[\s\S]*?<\/w:tc>/g) || []).length : 0;
-    tables.push({ index: idx, rows, cols });
-  }
-
-  return tables;
+  return getBodyContentInfo(xml)
+    .filter((item): item is Extract<BodyContentInfo, { type: "table" }> => item.type === "table")
+    .map(({ index, rows, cols }) => ({ index, rows, cols }));
 }
 
 // ============================================================================
@@ -278,6 +382,8 @@ async function navigateToElement(
         if ((firstSeg.name === "tbl" || firstSeg.name === "table") && childIndex >= 0 && childIndex < tables.length) {
           const table = tables[childIndex];
           const tablePath = `/body/tbl[${childIndex + 1}]`;
+          const tableContent = getBodyContentInfo(documentXml)
+            .find((item): item is Extract<BodyContentInfo, { type: "table" }> => item.type === "table" && item.index === childIndex + 1);
           const tableNode = createDocumentNode(
             tablePath,
             "table",
@@ -285,15 +391,24 @@ async function navigateToElement(
             { rowCount: table.rows, columnCount: table.cols }
           );
 
-          if (depth > 0) {
+          if (depth > 0 && tableContent) {
             const rows: DocumentNode[] = [];
-            for (let i = 0; i < table.rows; i++) {
-              rows.push(createDocumentNode(
+            for (let i = 0; i < tableContent.cells.length; i++) {
+              const rowNode = createDocumentNode(
                 `/body/tbl[${childIndex + 1}]/tr[${i + 1}]`,
                 "row",
                 undefined,
-                { cellCount: table.cols }
-              ));
+                { cellCount: tableContent.cells[i].length }
+              );
+              rowNode.children = tableContent.cells[i].map((cellText, cellIndex) =>
+                createDocumentNode(
+                  `/body/tbl[${childIndex + 1}]/tr[${i + 1}]/tc[${cellIndex + 1}]`,
+                  "cell",
+                  cellText,
+                )
+              );
+              rowNode.childCount = rowNode.children.length;
+              rows.push(rowNode);
             }
             tableNode.children = rows;
             tableNode.childCount = rows.length;
@@ -308,14 +423,26 @@ async function navigateToElement(
                 return tableNode.children![rowIdx];
               }
             }
+            // Handle /body/tbl[N]/cell[N,N] format
+            if (remaining2.length === 1 && remaining2[0].name === "cell" && remaining2[0].stringIndex?.includes(",")) {
+              const [rowStr, colStr] = remaining2[0].stringIndex!.split(",");
+              const rowIdx = parseInt(rowStr, 10) - 1;
+              const cellIdx = parseInt(colStr, 10) - 1;
+              const cellText = tableContent?.cells[rowIdx]?.[cellIdx];
+              if (rowIdx >= 0 && rowIdx < table.rows && cellIdx >= 0 && cellIdx < table.cols) {
+                const cellPath = `/body/tbl[${childIndex + 1}]/cell[${rowIdx + 1},${cellIdx + 1}]`;
+                return createDocumentNode(cellPath, "cell", cellText);
+              }
+            }
             if (remaining2.length === 2 &&
                 (remaining2[0].name === "tr" || remaining2[0].name === "row") &&
                 (remaining2[1].name === "tc" || remaining2[1].name === "cell")) {
               const rowIdx = (remaining2[0].index || 1) - 1;
               const cellIdx = (remaining2[1].index || 1) - 1;
+              const cellText = tableContent?.cells[rowIdx]?.[cellIdx];
               if (rowIdx >= 0 && rowIdx < table.rows && cellIdx >= 0 && cellIdx < table.cols) {
                 const cellPath = `/body/tbl[${childIndex + 1}]/tr[${rowIdx + 1}]/tc[${cellIdx + 1}]`;
-                return createDocumentNode(cellPath, "cell");
+                return createDocumentNode(cellPath, "cell", cellText);
               }
             }
           }
@@ -497,47 +624,44 @@ function buildChildPath(parentPath: string, segments: PathSegment[]): string {
 function getRunsFromParagraph(documentXml: string, paraIndex: number): DocumentNode[] {
   const runs: DocumentNode[] = [];
 
-  const paraRegex = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi;
-  let match;
-  let idx = 0;
+  const paraXml = getBodyContentInfo(documentXml)
+    .find((item): item is Extract<BodyContentInfo, { type: "paragraph" }> => item.type === "paragraph" && item.index === paraIndex)
+    ?.xml;
 
-  while ((match = paraRegex.exec(documentXml)) !== null) {
-    idx++;
-    if (idx !== paraIndex) continue;
+  if (!paraXml) {
+    return runs;
+  }
 
-    const paraXml = match[0];
-    const runRegex = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/gi;
-    let runMatch;
-    let runIdx = 0;
+  const runRegex = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/gi;
+  let runMatch;
+  let runIdx = 0;
 
-    while ((runMatch = runRegex.exec(paraXml)) !== null) {
-      runIdx++;
-      const runXml = runMatch[0];
-      const text = extractTextSimple(runXml);
+  while ((runMatch = runRegex.exec(paraXml)) !== null) {
+    runIdx++;
+    const runXml = runMatch[0];
+    const text = extractTextSimple(runXml);
 
-      const format: Record<string, unknown> = {};
-      if (runXml.includes("<w:b/>") || runXml.includes("<w:b ")) format.bold = true;
-      if (runXml.includes("<w:i/>") || runXml.includes("<w:i ")) format.italic = true;
-      if (runXml.includes("<w:u ")) format.underline = "single";
-      if (runXml.includes("<w:strike/>") || runXml.includes("<w:strike ")) format.strike = true;
+    const format: Record<string, unknown> = {};
+    if (runXml.includes("<w:b/>") || runXml.includes("<w:b ")) format.bold = true;
+    if (runXml.includes("<w:i/>") || runXml.includes("<w:i ")) format.italic = true;
+    if (runXml.includes("<w:u ")) format.underline = "single";
+    if (runXml.includes("<w:strike/>") || runXml.includes("<w:strike ")) format.strike = true;
 
-      const fontMatch = runXml.match(/<w:rFonts[^>]*w:ascii="([^"]*)"/);
-      if (fontMatch) format.font = fontMatch[1];
+    const fontMatch = runXml.match(/<w:rFonts[^>]*w:ascii="([^"]*)"/);
+    if (fontMatch) format.font = fontMatch[1];
 
-      const sizeMatch = runXml.match(/<w:sz[^>]*w:val="([^"]*)"/);
-      if (sizeMatch) format.size = `${parseInt(sizeMatch[1]) / 2}pt`;
+    const sizeMatch = runXml.match(/<w:sz[^>]*w:val="([^"]*)"/);
+    if (sizeMatch) format.size = `${parseInt(sizeMatch[1]) / 2}pt`;
 
-      const colorMatch = runXml.match(/<w:color[^>]*w:val="([^"]*)"/);
-      if (colorMatch) format.color = colorMatch[1];
+    const colorMatch = runXml.match(/<w:color[^>]*w:val="([^"]*)"/);
+    if (colorMatch) format.color = colorMatch[1];
 
-      runs.push(createDocumentNode(
-        `/body/p[${paraIndex}]/r[${runIdx}]`,
-        "run",
-        text,
-        format
-      ));
-    }
-    break;
+    runs.push(createDocumentNode(
+      `/body/p[${paraIndex}]/r[${runIdx}]`,
+      "run",
+      text,
+      format
+    ));
   }
 
   return runs;
@@ -1696,6 +1820,11 @@ function insertAtPosition(docXml: string, insertXml: string, position: string | 
   }
 
   if (position === "end" || position === undefined || position === null) {
+    const sectPrMatch = /<w:sectPr\b[\s\S]*?(?:\/>|<\/w:sectPr>)/i.exec(bodyMatch[1]);
+    if (sectPrMatch && sectPrMatch.index !== undefined) {
+      const insertPos = bodyOpen + 8 + sectPrMatch.index;
+      return docXml.slice(0, insertPos) + insertXml + docXml.slice(insertPos);
+    }
     return docXml.slice(0, bodyClose) + insertXml + docXml.slice(bodyClose);
   }
 
@@ -2315,6 +2444,92 @@ export async function setWordNode(
       return ok({ path: targetPath });
     }
 
+    // Handle /body/table[N]/cell[N,N] path
+    const tableCellMatch = /^\/body\/table\[(\d+)\]\/cell\[(\d+),(\d+)\]$/.exec(targetPath);
+    if (tableCellMatch) {
+      const tableIndex = parseInt(tableCellMatch[1], 10);
+      const rowIndex = parseInt(tableCellMatch[2], 10);
+      const colIndex = parseInt(tableCellMatch[3], 10);
+      const newText = props.text;
+
+      // Find and update the cell text
+      const tblPattern = /<w:tbl\b[\s\S]*?<\/w:tbl>/g;
+      let tblMatch;
+      let currentTblIndex = 0;
+      while ((tblMatch = tblPattern.exec(documentXml)) !== null) {
+        currentTblIndex++;
+        if (currentTblIndex === tableIndex) {
+          const tblXml = tblMatch[0];
+          // Find the row
+          const rowPattern = /<w:tr\b[\s\S]*?<\/w:tr>/g;
+          let rowMatch;
+          let currentRowIndex = 0;
+          while ((rowMatch = rowPattern.exec(tblXml)) !== null) {
+            currentRowIndex++;
+            if (currentRowIndex === rowIndex) {
+              const rowXml = rowMatch[0];
+              // Find the cell
+              const cellPattern = /<w:tc\b[\s\S]*?<\/w:tc>/g;
+              let cellMatch;
+              let currentCellIndex = 0;
+              while ((cellMatch = cellPattern.exec(rowXml)) !== null) {
+                currentCellIndex++;
+                if (currentCellIndex === colIndex) {
+                  // Update the cell text - replace content inside <w:t>
+                  const cellXml = cellMatch[0];
+                  if (newText !== undefined) {
+                    // Find the text run and update it
+                    const updatedCellXml = cellXml.replace(/(<w:t[^>]*>)([^<]*)(<\/w:t>)/, (_, open, _oldText, close) => {
+                      return open + escapeXml(newText) + close;
+                    });
+                    const updatedRowXml = rowXml.substring(0, cellMatch.index) + updatedCellXml + rowXml.substring(cellMatch.index + cellMatch[0].length);
+                    const updatedTableXml = tblXml.substring(0, rowMatch.index) + updatedRowXml + tblXml.substring(rowMatch.index + rowMatch[0].length);
+                    documentXml = documentXml.substring(0, tblMatch.index) + updatedTableXml + documentXml.substring(tblMatch.index + tblMatch[0].length);
+                    zip.file("word/document.xml", documentXml);
+                    await zip.remove("officekit/document.json");
+                    await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+                    return ok({ path: targetPath });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      return err("not_found", `Table cell ${rowIndex},${colIndex} not found in table ${tableIndex}`);
+    }
+
+    // Handle /body/p[N] path - set paragraph text
+    const paraMatch = /^\/body\/p\[(\d+)\]$/.exec(targetPath);
+    if (paraMatch) {
+      const paraIndex = parseInt(paraMatch[1], 10);
+      const newText = props.text;
+
+      // Find all paragraphs in document order
+      const allParaPattern = /<w:p\b[\s\S]*?<\/w:p>/g;
+      let paraIdx = 0;
+      let match;
+      while ((match = allParaPattern.exec(documentXml)) !== null) {
+        paraIdx++;
+        if (paraIdx === paraIndex) {
+          if (newText !== undefined) {
+            // Update the paragraph text
+            const paraXml = match[0];
+            // Replace all <w:t> content with new text
+            const updatedParaXml = paraXml.replace(/(<w:t[^>]*>)([^<]*)(<\/w:t>)/g, (_, open, _oldText, close) => {
+              return open + newText + close;
+            });
+            documentXml = documentXml.substring(0, match.index) + updatedParaXml + documentXml.substring(match.index + match[0].length);
+          }
+          zip.file("word/document.xml", documentXml);
+          await zip.remove("officekit/document.json");
+          await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+          return ok({ path: targetPath });
+        }
+      }
+      return err("not_found", `Paragraph ${paraIndex} not found`);
+    }
+
     await writeFile(filePath, await zip.generateAsync({ type: "nodebuffer" }));
     return ok({ path: targetPath });
   } catch (e) {
@@ -2714,22 +2929,32 @@ function renderAnnotatedView(xml: string, stylesXml: string, options?: WordViewO
 
 function renderOutlineView(xml: string, filePath: string): string {
   const lines: string[] = [];
-
-  const paras = getParagraphsInfo(xml);
-  const tables = getTablesInfo(xml);
   const fileName = filePath.split("/").pop() || "document.docx";
 
-  lines.push(`File: ${fileName} | ${paras.length} paragraphs | ${tables.length} tables`);
+  const bodyContent = getBodyContentInfo(xml);
+  const paraCount = bodyContent.filter((item) => item.type === "paragraph").length;
+  const tblCount = bodyContent.filter((item) => item.type === "table").length;
+  lines.push(`File: ${fileName} | ${paraCount} paragraphs | ${tblCount} tables`);
 
-  let lineNum = 0;
-  for (const para of paras) {
-    lineNum++;
+  for (const item of bodyContent) {
+    if (item.type === "paragraph") {
+      const style = item.style;
+      if (style && (style.includes("Heading") || style === "Title" || style === "Subtitle")) {
+        const level = getHeadingLevel(style);
+        const indent = level <= 1 ? "" : "  ".repeat(level - 1);
+        const prefix = level === 0 ? "■" : "├──";
+        lines.push(`${indent}${prefix} [${item.index}] "${item.text}" (${style})`);
+      } else {
+        lines.push(`Paragraph ${item.index}: ${item.text}`);
+      }
+      continue;
+    }
 
-    if (para.style && (para.style.includes("Heading") || para.style === "Title" || para.style === "Subtitle")) {
-      const level = getHeadingLevel(para.style);
-      const indent = level <= 1 ? "" : "  ".repeat(level - 1);
-      const prefix = level === 0 ? "■" : "├──";
-      lines.push(`${indent}${prefix} [${lineNum}] "${para.text}" (${para.style})`);
+    lines.push(`Table ${item.index}: ${item.rows}x${item.cols}`);
+    for (const [rowIndex, row] of item.cells.entries()) {
+      for (const [cellIndex, cellText] of row.entries()) {
+        lines.push(`  R${rowIndex + 1}C${cellIndex + 1}: ${cellText}`);
+      }
     }
   }
 
@@ -2850,29 +3075,41 @@ function renderHtmlView(xml: string, _stylesXml: string): string {
   lines.push("</head>");
   lines.push("<body>");
 
-  const paras = getParagraphsInfo(xml);
-  for (const para of paras) {
-    let className = para.style || "Normal";
-    className = className.replace(/\s+/g, "");
+  for (const item of getBodyContentInfo(xml)) {
+    if (item.type === "paragraph") {
+      let className = item.style || "Normal";
+      className = className.replace(/\s+/g, "");
 
-    let html = `<p`;
-    if (className !== "Normal") {
-      html += ` class="${escapeHtml(className)}"`;
+      let html = `<p`;
+      if (className !== "Normal") {
+        html += ` class="${escapeHtml(className)}"`;
+      }
+      html += ">";
+
+      const runs = getRunsInfo(xml, item.index);
+      for (const run of runs) {
+        let text = escapeHtml(run.text);
+        if (run.bold) text = `<strong>${text}</strong>`;
+        if (run.italic) text = `<em>${text}</em>`;
+        if (run.underline) text = `<u>${text}</u>`;
+        if (run.color) text = `<span style="color:${run.color}">${text}</span>`;
+        html += text;
+      }
+
+      html += "</p>";
+      lines.push(html);
+      continue;
     }
-    html += ">";
 
-    const runs = getRunsInfo(xml, para.index);
-    for (const run of runs) {
-      let text = escapeHtml(run.text);
-      if (run.bold) text = `<strong>${text}</strong>`;
-      if (run.italic) text = `<em>${text}</em>`;
-      if (run.underline) text = `<u>${text}</u>`;
-      if (run.color) text = `<span style="color:${run.color}">${text}</span>`;
-      html += text;
+    lines.push("<table>");
+    for (const row of item.cells) {
+      lines.push("<tr>");
+      for (const cellText of row) {
+        lines.push(`<td>${escapeHtml(cellText)}</td>`);
+      }
+      lines.push("</tr>");
     }
-
-    html += "</p>";
-    lines.push(html);
+    lines.push("</table>");
   }
 
   lines.push("</body>");
@@ -3620,48 +3857,45 @@ interface RunInfo {
 function getRunsInfo(xml: string, paraIndex: number): RunInfo[] {
   const runs: RunInfo[] = [];
 
-  const paraRegex = /<w:p[\s\S]*?<\/w:p>/g;
-  let match;
-  let idx = 0;
+  const paraXml = getBodyContentInfo(xml)
+    .find((item): item is Extract<BodyContentInfo, { type: "paragraph" }> => item.type === "paragraph" && item.index === paraIndex)
+    ?.xml;
 
-  while ((match = paraRegex.exec(xml)) !== null) {
-    idx++;
-    if (idx !== paraIndex) continue;
+  if (!paraXml) {
+    return runs;
+  }
 
-    const paraXml = match[0];
-    const runRegex = /<w:r[\s\S]*?<\/w:r>/g;
-    let runMatch;
+  const runRegex = /<w:r[\s\S]*?<\/w:r>/g;
+  let runMatch;
 
-    while ((runMatch = runRegex.exec(paraXml)) !== null) {
-      const runXml = runMatch[0];
-      const textMatch = /<w:t[^>]*>([^<]*)<\/w:t>/i.exec(runXml);
-      const text = textMatch ? textMatch[1] : "";
+  while ((runMatch = runRegex.exec(paraXml)) !== null) {
+    const runXml = runMatch[0];
+    const textMatch = /<w:t[^>]*>([^<]*)<\/w:t>/i.exec(runXml);
+    const text = textMatch ? textMatch[1] : "";
 
-      const runInfo: RunInfo = { text };
+    const runInfo: RunInfo = { text };
 
-      const rPrMatch = /<w:rPr>([\s\S]*?)<\/w:rPr>/i.exec(runXml);
-      if (rPrMatch) {
-        const rPrContent = rPrMatch[1];
+    const rPrMatch = /<w:rPr>([\s\S]*?)<\/w:rPr>/i.exec(runXml);
+    if (rPrMatch) {
+      const rPrContent = rPrMatch[1];
 
-        const fontMatch = /<w:rFonts[^>]*w:ascii="([^"]*)"/i.exec(rPrContent);
-        if (fontMatch) runInfo.font = fontMatch[1];
+      const fontMatch = /<w:rFonts[^>]*w:ascii="([^"]*)"/i.exec(rPrContent);
+      if (fontMatch) runInfo.font = fontMatch[1];
 
-        const sizeMatch = /<w:sz[^>]*w:val="([^"]*)"/i.exec(rPrContent);
-        if (sizeMatch) runInfo.size = `${parseInt(sizeMatch[1], 10) / 2}pt`;
+      const sizeMatch = /<w:sz[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+      if (sizeMatch) runInfo.size = `${parseInt(sizeMatch[1], 10) / 2}pt`;
 
-        if (/<w:b[^>]*>/i.test(rPrContent)) runInfo.bold = true;
-        if (/<w:i[^>]*>/i.test(rPrContent)) runInfo.italic = true;
+      if (/<w:b[^>]*>/i.test(rPrContent)) runInfo.bold = true;
+      if (/<w:i[^>]*>/i.test(rPrContent)) runInfo.italic = true;
 
-        const underlineMatch = /<w:u[^>]*w:val="([^"]*)"/i.exec(rPrContent);
-        if (underlineMatch) runInfo.underline = underlineMatch[1];
+      const underlineMatch = /<w:u[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+      if (underlineMatch) runInfo.underline = underlineMatch[1];
 
-        const colorMatch = /<w:color[^>]*w:val="([^"]*)"/i.exec(rPrContent);
-        if (colorMatch) runInfo.color = colorMatch[1];
-      }
-
-      runs.push(runInfo);
+      const colorMatch = /<w:color[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+      if (colorMatch) runInfo.color = colorMatch[1];
     }
-    break;
+
+    runs.push(runInfo);
   }
 
   return runs;

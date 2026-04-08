@@ -2,6 +2,8 @@ import fs from "node:fs";
 import http from "node:http";
 
 const DEFAULT_WAITING_MESSAGE = "Waiting for first update...";
+const PREVIEW_PORT_MIN = 20000;
+const PREVIEW_PORT_SPAN = 20000;
 
 /**
  * Build a lightweight preview HTML shell that can be swapped live by SSE updates.
@@ -63,14 +65,110 @@ export function buildPreviewHtml({
  * @returns {Promise<{port:number,url:string,publish:(message: PreviewMessageInput) => PreviewState, close:() => Promise<void>, snapshot:() => PreviewState}>}
  */
 export async function startPreviewServer({ port = 0, initialHtml } = {}) {
-  /** @type {Set<import("node:http").ServerResponse>} */
-  const clients = new Set();
   /** @type {PreviewState} */
   let state = {
     version: 0,
     html: initialHtml ?? buildPreviewHtml(),
     lastAction: "full",
   };
+
+  if (typeof Bun !== "undefined" && typeof Bun.serve === "function") {
+    /** @type {Set<ReadableStreamDefaultController<Uint8Array>>} */
+    const clients = new Set();
+    const encoder = new TextEncoder();
+    const server = startBunPreviewServer(port, async (request) => {
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/") {
+        return new Response(state.html, {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/health") {
+        return Response.json({ ok: true, version: state.version, clients: clients.size });
+      }
+
+      if (request.method === "GET" && url.pathname === "/events") {
+        const stream = new ReadableStream({
+          start(controller) {
+            clients.add(controller);
+            controller.enqueue(encoder.encode(`event: update\ndata: ${JSON.stringify({ version: state.version, html: extractBodyHtml(state.html) })}\n\n`));
+          },
+          cancel() {
+            for (const controller of clients) {
+              if (controller.desiredSize === null) {
+                clients.delete(controller);
+              }
+            }
+          },
+        });
+
+        return new Response(stream, {
+          headers: {
+            "cache-control": "no-cache, no-transform",
+            connection: "keep-alive",
+            "content-type": "text/event-stream; charset=utf-8",
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/message") {
+        const body = await request.text();
+        const payload = body.length > 0 ? JSON.parse(body) : {};
+        return Response.json(publish(payload));
+      }
+
+      return Response.json({ ok: false, error: "not_found" }, { status: 404 });
+    });
+
+    function publish(message = {}) {
+      state = {
+        version: typeof message.version === "number" ? message.version : state.version + 1,
+        html: message.fullHtml ?? wrapBodyHtml(message.html ?? extractBodyHtml(state.html)),
+        scrollTo: message.scrollTo,
+        lastAction: message.action ?? "full",
+      };
+
+      const event = encoder.encode(`event: update\ndata: ${JSON.stringify({
+        version: state.version,
+        action: state.lastAction,
+        html: extractBodyHtml(state.html),
+        scrollTo: state.scrollTo,
+      })}\n\n`);
+
+      for (const controller of clients) {
+        try {
+          controller.enqueue(event);
+        } catch {
+          clients.delete(controller);
+        }
+      }
+
+      return state;
+    }
+
+    return {
+      port: server.port,
+      url: `http://127.0.0.1:${server.port}`,
+      publish,
+      snapshot: () => state,
+      close: async () => {
+        for (const controller of clients) {
+          try {
+            controller.close();
+          } catch {
+            // Ignore already-closed streams.
+          }
+        }
+        clients.clear();
+        server.stop(true);
+      },
+    };
+  }
+
+  /** @type {Set<import("node:http").ServerResponse>} */
+  const clients = new Set();
 
   const server = http.createServer(async (request, response) => {
     const { method = "GET", url = "/" } = request;
@@ -112,10 +210,7 @@ export async function startPreviewServer({ port = 0, initialHtml } = {}) {
     response.end(JSON.stringify({ ok: false, error: "not_found" }));
   });
 
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", resolve);
-  });
+  await listenPreviewServer(server, port);
 
   const address = server.address();
   if (!address || typeof address === "string") {
@@ -157,6 +252,78 @@ export async function startPreviewServer({ port = 0, initialHtml } = {}) {
       await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     },
   };
+}
+
+/**
+ * @param {import("node:http").Server} server
+ * @param {number} requestedPort
+ * @returns {Promise<void>}
+ */
+async function listenPreviewServer(server, requestedPort) {
+  const attempts = requestedPort === 0 ? 12 : 1;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const candidatePort = requestedPort === 0 ? randomPreviewPort() : requestedPort;
+
+    try {
+      await new Promise((resolve, reject) => {
+        const onError = (error) => {
+          server.off("listening", onListening);
+          reject(error);
+        };
+        const onListening = () => {
+          server.off("error", onError);
+          resolve();
+        };
+
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(candidatePort, "127.0.0.1");
+      });
+      return;
+    } catch (error) {
+      if (!(requestedPort === 0 && error && typeof error === "object" && "code" in error && error.code === "EADDRINUSE")) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error("Unable to find an open preview port.");
+}
+
+/**
+ * @returns {number}
+ */
+function randomPreviewPort() {
+  return PREVIEW_PORT_MIN + Math.floor(Math.random() * PREVIEW_PORT_SPAN);
+}
+
+/**
+ * @param {number} requestedPort
+ * @param {(request: Request) => Response | Promise<Response>} fetch
+ * @returns {ReturnType<typeof Bun.serve>}
+ */
+function startBunPreviewServer(requestedPort, fetch) {
+  const attempts = requestedPort === 0 ? 12 : 1;
+  let lastError;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const candidatePort = requestedPort === 0 ? randomPreviewPort() : requestedPort;
+    try {
+      return Bun.serve({
+        port: candidatePort,
+        hostname: "127.0.0.1",
+        fetch,
+      });
+    } catch (error) {
+      lastError = error;
+      if (!(requestedPort === 0 && error && typeof error === "object" && "code" in error && error.code === "EADDRINUSE")) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError ?? new Error("Unable to find an open preview port.");
 }
 
 /**
