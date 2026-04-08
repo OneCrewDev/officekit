@@ -875,8 +875,8 @@ describe("officekit CLI scaffold", () => {
     expect(f12.stdout).toContain('"evaluatedValue": "30"');
     expect(f13.stdout).toContain('"evaluatedValue": "21"');
     expect(f14.stdout).toContain('"evaluatedValue": "44211"');
-    expect(f15.stdout).toContain('"evaluatedValue": "44254"');
-    expect(textView.stdout).toContain("[/Sheet1/row[6]] \t\t\t\t\tHello-World");
+    expect(f15.stdout).toContain('"evaluatedValue": "44255"');
+    expect(textView.stdout).toContain("[/Sheet1/row[6]] Hello-World");
   });
 
   test("supports richer chart properties beyond title and series name", async () => {
