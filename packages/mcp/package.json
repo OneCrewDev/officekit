@@ -1,0 +1,40 @@
+{
+  "name": "@officekit/mcp",
+  "version": "0.1.0",
+  "description": "MCP Server for @officekit - exposes officekit operations as tools for AI assistants",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mcp-server": "./src/mcp-server.ts",
+    "./mcp-tools": "./src/mcp-tools.ts"
+  },
+  "scripts": {
+    "test": "node --test src/**/*.test.ts",
+    "build": "tsc"
+  },
+  "keywords": [
+    "officekit",
+    "mcp",
+    "model-context-protocol",
+    "office",
+    "document",
+    "word",
+    "excel",
+    "powerpoint"
+  ],
+  "dependencies": {
+    "@officekit/core": "workspace:*",
+    "@officekit/ppt": "workspace:*",
+    "@officekit/word": "workspace:*",
+    "@officekit/excel": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
