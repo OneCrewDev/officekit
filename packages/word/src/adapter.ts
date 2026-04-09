@@ -24,6 +24,9 @@ import { parsePath, buildPath } from "./path.js";
 import { parseSelector } from "./selectors.js";
 import type { Result, DocumentNode, PathSegment } from "./types.js";
 
+// Import html-preview module for enhanced Word HTML rendering
+import { renderHtmlPreview } from "./html-preview/index.js";
+
 // ============================================================================
 // ZIP Helpers
 // ============================================================================
@@ -2847,7 +2850,7 @@ export async function viewWordDocument(
     case "issues":
       return { mode, output: renderIssuesView(documentXml, options) };
     case "html":
-      return { mode, output: renderHtmlView(documentXml, stylesXml) };
+      return { mode, output: await renderHtmlPreview(zip, documentXml, stylesXml, { pageFilter: options?.pageFilter }) };
     case "forms":
       return { mode, output: await renderFormsView(zip, documentXml) };
     case "json":
@@ -3894,6 +3897,25 @@ interface RunInfo {
   bold?: boolean;
   italic?: boolean;
   underline?: string;
+  strike?: string;
+  color?: string;
+  highlight?: string;
+  verticalAlign?: string;
+  smallCaps?: boolean;
+  shading?: string;
+  border?: RunBorderInfo;
+}
+
+interface RunBorderInfo {
+  top?: BorderSide;
+  bottom?: BorderSide;
+  left?: BorderSide;
+  right?: BorderSide;
+}
+
+interface BorderSide {
+  style?: string;
+  size?: number;
   color?: string;
 }
 
@@ -3934,14 +3956,105 @@ function getRunsInfo(xml: string, paraIndex: number): RunInfo[] {
       const underlineMatch = /<w:u[^>]*w:val="([^"]*)"/i.exec(rPrContent);
       if (underlineMatch) runInfo.underline = underlineMatch[1];
 
+      // Strike (w:strike or w:dstrike)
+      const strikeMatch = /<w:strike[^>]*w:val="([^"]*)"/i.exec(rPrContent)
+        || /<w:dstrike[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+      if (strikeMatch) runInfo.strike = strikeMatch[1];
+      else if (/<w:strike[^>]*>/i.test(rPrContent) || /<w:dstrike[^>]*>/i.test(rPrContent)) runInfo.strike = "single";
+
+      // Color
       const colorMatch = /<w:color[^>]*w:val="([^"]*)"/i.exec(rPrContent);
       if (colorMatch) runInfo.color = colorMatch[1];
+
+      // Highlight
+      const highlightMatch = /<w:highlight[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+      if (highlightMatch) runInfo.highlight = highlightMatch[1];
+
+      // Vertical align (w:vertAlign)
+      const vertAlignMatch = /<w:vertAlign[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+      if (vertAlignMatch) runInfo.verticalAlign = vertAlignMatch[1];
+
+      // Small caps (w:smallCaps)
+      const smallCapsMatch = /<w:smallCaps[^>]*w:val="([^"]*)"/i.exec(rPrContent);
+      if (smallCapsMatch) runInfo.smallCaps = smallCapsMatch[1] !== "0" && smallCapsMatch[1] !== "false";
+      else if (/<w:smallCaps[^>]*>/i.test(rPrContent)) runInfo.smallCaps = true;
+
+      // Shading (w:shd)
+      const shadingMatch = /<w:shd[^>]*w:fill="([^"]*)"/i.exec(rPrContent);
+      if (shadingMatch) runInfo.shading = shadingMatch[1];
+
+      // Borders (w:bdr)
+      const borderInfo = parseRunBorders(rPrContent);
+      if (borderInfo) runInfo.border = borderInfo;
     }
 
     runs.push(runInfo);
   }
 
   return runs;
+}
+
+function parseRunBorders(rPrContent: string): RunBorderInfo | undefined {
+  const borderRegex = /<w:bdr[^>]*\/>/g;
+  const borders: RunBorderInfo = {};
+  let match;
+
+  while ((match = borderRegex.exec(rPrContent)) !== null) {
+    const borderXml = match[0];
+    const edgeMatch = /w:val="([^"]*)"/.exec(borderXml);
+    const colorMatch = /w:color="([^"]*)"/.exec(borderXml);
+    const szMatch = /w:sz="([^"]*)"/.exec(borderXml);
+
+    if (edgeMatch) {
+      const edge = edgeMatch[1];
+      const borderSide: BorderSide = {};
+      if (colorMatch) borderSide.color = colorMatch[1];
+      if (szMatch) borderSide.size = parseInt(szMatch[1], 10);
+      borderSide.style = edge;
+
+      if (/<w:bdr[^>]*w:val="top"/i.test(borderXml)) borders.top = borderSide;
+      else if (/<w:bdr[^>]*w:val="bottom"/i.test(borderXml)) borders.bottom = borderSide;
+      else if (/<w:bdr[^>]*w:val="left"/i.test(borderXml)) borders.left = borderSide;
+      else if (/<w:bdr[^>]*w:val="right"/i.test(borderXml)) borders.right = borderSide;
+    }
+  }
+
+  // Also check for individual border elements
+  const topBorder = /<w:top\b[^>]*>/i.exec(rPrContent);
+  const bottomBorder = /<w:bottom\b[^>]*>/i.exec(rPrContent);
+  const leftBorder = /<w:left\b[^>]*>/i.exec(rPrContent);
+  const rightBorder = /<w:right\b[^>]*>/i.exec(rPrContent);
+
+  if (topBorder) {
+    borders.top = parseBorderSide(topBorder[0]);
+  }
+  if (bottomBorder) {
+    borders.bottom = parseBorderSide(bottomBorder[0]);
+  }
+  if (leftBorder) {
+    borders.left = parseBorderSide(leftBorder[0]);
+  }
+  if (rightBorder) {
+    borders.right = parseBorderSide(rightBorder[0]);
+  }
+
+  if (Object.keys(borders).length > 0) {
+    return borders;
+  }
+  return undefined;
+}
+
+function parseBorderSide(borderXml: string): BorderSide {
+  const side: BorderSide = {};
+  const valMatch = /w:val="([^"]*)"/.exec(borderXml);
+  const colorMatch = /w:color="([^"]*)"/.exec(borderXml);
+  const szMatch = /w:sz="([^"]*)"/.exec(borderXml);
+
+  if (valMatch) side.style = valMatch[1];
+  if (colorMatch) side.color = colorMatch[1];
+  if (szMatch) side.size = parseInt(szMatch[1], 10);
+
+  return side;
 }
 
 function formatRunInfo(run: RunInfo): string {
@@ -4076,16 +4189,87 @@ function escapeRegex(str: string): string {
 
 function generateBasicCss(): string {
   return `
-    body { font-family: Calibri, Arial, sans-serif; font-size: 12pt; line-height: 1.5; }
-    p { margin: 0.5em 0; }
+    body {
+      font-family: Calibri, "Calibri Light", Arial, sans-serif;
+      font-size: 12pt;
+      line-height: 1.15;
+      color: #000;
+      background: #fff;
+    }
+    .page {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 0.75in auto;
+      padding: 0;
+      background: #fff;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    p { margin: 0; padding: 0; }
     strong { font-weight: bold; }
     em { font-style: italic; }
     u { text-decoration: underline; }
-    .Heading1 { font-size: 24pt; font-weight: bold; margin: 12pt 0 6pt 0; }
-    .Heading2 { font-size: 18pt; font-weight: bold; margin: 10pt 0 4pt 0; }
-    .Heading3 { font-size: 14pt; font-weight: bold; margin: 8pt 0 2pt 0; }
-    table { border-collapse: collapse; }
-    td, th { border: 1px solid #ccc; padding: 4px 8px; }
+    s, strike { text-decoration: line-through; }
+    .Heading1 { font-size: 28pt; font-weight: bold; margin: 24pt 0 12pt 0; color: #2e5496; }
+    .Heading2 { font-size: 24pt; font-weight: bold; margin: 20pt 0 10pt 0; color: #2e5496; }
+    .Heading3 { font-size: 18pt; font-weight: bold; margin: 16pt 0 8pt 0; color: #1f4e79; }
+    .Heading4 { font-size: 14pt; font-weight: bold; margin: 12pt 0 6pt 0; }
+    .Title { font-size: 36pt; font-weight: bold; margin: 24pt 0 12pt 0; text-align: center; }
+    .Subtitle { font-size: 18pt; color: #666; margin: 12pt 0; text-align: center; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      table-layout: fixed;
+    }
+    td, th {
+      border: 1px solid #b4b4b4;
+      padding: 4px 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      background: #f2f2f2;
+      font-weight: bold;
+    }
+    tr.header-row th {
+      background: #e8e8e8;
+    }
+    .borderless {
+      border: none;
+    }
+    .borderless td, .borderless th {
+      border: none;
+    }
+    sup {
+      vertical-align: super;
+      font-size: 0.7em;
+    }
+    sub {
+      vertical-align: sub;
+      font-size: 0.7em;
+    }
+    .footnote-ref {
+      font-size: 0.7em;
+      vertical-align: super;
+    }
+    .endnote-ref {
+      font-size: 0.7em;
+      vertical-align: super;
+    }
+    .footnote {
+      font-size: 10pt;
+      border-top: 1px solid #ccc;
+      padding-top: 8pt;
+      margin-top: 12pt;
+    }
+    .endnote {
+      font-size: 10pt;
+      border-top: 1px solid #ccc;
+      padding-top: 8pt;
+      margin-top: 12pt;
+    }
+    .page-break { page-break-before: always; }
+    .keep-next { page-break-after: avoid; }
+    .keep-lines { page-break-inside: avoid; }
   `;
 }
 
